@@ -896,6 +896,20 @@ mod tests {
             }
         }
         assert_lanes_match_scalar(&cold, &rows);
+        // Uniform exponent classes fill the eight-lane kernels.
+        for exponent in [1.0, 2.0, 0.6] {
+            let uniform: Vec<Value> = (0..19)
+                .map(|i| {
+                    let mut p = base.clone();
+                    p[0] *= 1.0 + f64::from(i) * 0.03;
+                    p[1] = exponent;
+                    p[6] = f64::from(i % 4);
+                    json!(p)
+                })
+                .collect();
+            assert_lanes_match_scalar(&example["model"], &uniform);
+            assert_lanes_match_scalar(&cold, &uniform);
+        }
     }
 
     /// Borrowed IDs and exact-size parameters decode like the plain derive

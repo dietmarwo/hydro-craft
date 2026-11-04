@@ -425,7 +425,7 @@ pub fn group_width(model: &Model) -> usize {
     }
 }
 
-const CATCHMENT_LANES: usize = 4;
+const CATCHMENT_LANES: usize = 8;
 const RESERVOIR_LANES: usize = 8;
 
 /// Evaluate untraced candidates together over the shared daily inputs.
@@ -454,26 +454,28 @@ pub fn evaluate_lanes(
                     Err(e) => results.push((Err(e), 0)),
                 }
             }
-            let mut rest = valid.as_slice();
-            while !rest.is_empty() {
-                let width = match rest.len() {
-                    4.. => 4,
-                    2.. => 2,
-                    _ => 1,
-                };
-                let (chunk, tail) = rest.split_at(width);
-                let states = match (width, metrics) {
-                    (4, false) => catchment_lanes::<4, false>(forcing, chunk),
-                    (4, true) => catchment_lanes::<4, true>(forcing, chunk),
-                    (2, false) => catchment_lanes::<2, false>(forcing, chunk),
-                    (2, true) => catchment_lanes::<2, true>(forcing, chunk),
-                    (_, false) => catchment_lanes::<1, false>(forcing, chunk),
-                    (_, true) => catchment_lanes::<1, true>(forcing, chunk),
-                };
-                for (&(i, _), state) in chunk.iter().zip(states) {
-                    results[i].0 = Ok((state.score(), metrics.then(|| state.metrics(None))));
+            // Lanes of one exponent class share a kernel. Lean runs of a known
+            // class use up to eight lanes; the others use up to four.
+            for class in [LINEAR, QUADRATIC, DYNAMIC] {
+                let lanes: Vec<_> = valid
+                    .iter()
+                    .filter(|(_, p)| exponent_class(p.exponent) == class)
+                    .copied()
+                    .collect();
+                let widest = if metrics || class == DYNAMIC { 4 } else { 8 };
+                let mut rest = lanes.as_slice();
+                while !rest.is_empty() {
+                    let width = [8, 4, 2, 1]
+                        .into_iter()
+                        .find(|&w| w <= widest && w <= rest.len())
+                        .unwrap_or(1);
+                    let (chunk, tail) = rest.split_at(width);
+                    let states = catchment_chunk(forcing, chunk, metrics, class);
+                    for (&(i, _), state) in chunk.iter().zip(states) {
+                        results[i].0 = Ok((state.score(), metrics.then(|| state.metrics(None))));
+                    }
+                    rest = tail;
                 }
-                rest = tail;
             }
             results
         }
@@ -618,41 +620,89 @@ struct CatchmentFlows {
     residual: f64,
 }
 
-/// Advance one catchment day. Scalar and interleaved evaluation share this
-/// function, so every candidate performs the same floating-point operations
-/// in the same order on either path.
+/// Exponent classes with dedicated lane steps. `DYNAMIC` checks the
+/// exponent on every wet day, exactly as the scalar path does.
+const DYNAMIC: u8 = 0;
+const LINEAR: u8 = 1;
+const QUADRATIC: u8 = 2;
+
+fn exponent_class(exponent: f64) -> u8 {
+    if exponent == 1.0 {
+        LINEAR
+    } else if exponent == 2.0 {
+        QUADRATIC
+    } else {
+        DYNAMIC
+    }
+}
+
+/// Store total at the start of a day, for the full-record balance.
 #[inline(always)]
-fn catchment_day<const METRICS: bool>(
-    s: &mut CatchmentState,
-    p: &CatchmentParameters,
-    d: &Day,
-) -> CatchmentFlows {
-    let before = if METRICS {
+fn day_start<const METRICS: bool>(s: &CatchmentState) -> f64 {
+    if METRICS {
         s.snow + s.soil + s.upper + s.lower
     } else {
         0.0
+    }
+}
+
+/// Frozen day: precipitation joins the snow store and no liquid water
+/// reaches the soil. Returns liquid water and recharge.
+#[inline(always)]
+fn freeze(s: &mut CatchmentState, d: &Day) -> (f64, f64) {
+    s.snow += d.precipitation_mm;
+    (0.0, 0.0)
+}
+
+/// Thawed day: snowmelt and recharge. Returns liquid water and recharge.
+/// For a known exponent class the recharge is computed and then selected,
+/// which gives the same value as skipping it on days without liquid water;
+/// `DYNAMIC` skips the power call on such days.
+#[inline(always)]
+fn thaw<const EXP: u8>(s: &mut CatchmentState, p: &CatchmentParameters, d: &Day) -> (f64, f64) {
+    let melt = s.snow.min(p.degree * d.temperature_c);
+    s.snow -= melt;
+    let liquid = d.precipitation_mm + melt;
+    let recharge = match EXP {
+        LINEAR => {
+            let recharge = liquid * (s.soil / p.capacity);
+            if liquid == 0.0 { 0.0 } else { recharge }
+        }
+        QUADRATIC => {
+            let moisture = s.soil / p.capacity;
+            let recharge = liquid * (moisture * moisture);
+            if liquid == 0.0 { 0.0 } else { recharge }
+        }
+        _ => {
+            if liquid == 0.0 {
+                0.0
+            } else {
+                let moisture = s.soil / p.capacity;
+                let fraction = if p.exponent == 1.0 {
+                    moisture
+                } else if p.exponent == 2.0 {
+                    moisture * moisture
+                } else {
+                    moisture.powf(p.exponent)
+                };
+                liquid * fraction
+            }
+        }
     };
-    let liquid = if d.temperature_c <= 0.0 {
-        s.snow += d.precipitation_mm;
-        0.0
-    } else {
-        let melt = s.snow.min(p.degree * d.temperature_c);
-        s.snow -= melt;
-        d.precipitation_mm + melt
-    };
-    let recharge = if liquid == 0.0 {
-        0.0
-    } else {
-        let moisture = s.soil / p.capacity;
-        let fraction = if p.exponent == 1.0 {
-            moisture
-        } else if p.exponent == 2.0 {
-            moisture * moisture
-        } else {
-            moisture.powf(p.exponent)
-        };
-        liquid * fraction
-    };
+    (liquid, recharge)
+}
+
+/// Soil overflow, evapotranspiration, percolation and recession after the
+/// day's liquid water and recharge are known.
+#[inline(always)]
+fn day_finish<const METRICS: bool>(
+    s: &mut CatchmentState,
+    p: &CatchmentParameters,
+    d: &Day,
+    before: f64,
+    liquid: f64,
+    recharge: f64,
+) -> CatchmentFlows {
     s.soil += liquid - recharge;
     let overflow = (s.soil - p.capacity).max(0.0);
     s.soil -= overflow;
@@ -685,6 +735,24 @@ fn catchment_day<const METRICS: bool>(
     }
 }
 
+/// Advance one catchment day on the scalar path. The lane kernels compose
+/// the same steps, so every candidate performs the same floating-point
+/// operations in the same order on either path.
+#[inline(always)]
+fn catchment_day<const METRICS: bool>(
+    s: &mut CatchmentState,
+    p: &CatchmentParameters,
+    d: &Day,
+) -> CatchmentFlows {
+    let before = day_start::<METRICS>(s);
+    let (liquid, recharge) = if d.temperature_c <= 0.0 {
+        freeze(s, d)
+    } else {
+        thaw::<DYNAMIC>(s, p, d)
+    };
+    day_finish::<METRICS>(s, p, d, before, liquid, recharge)
+}
+
 /// Score one simulated day. Lean runs score the training fold only; full
 /// runs also score validation and test.
 #[inline(always)]
@@ -698,9 +766,10 @@ fn score_day<const METRICS: bool>(folds: &mut [Score; 3], d: &Day, runoff: f64) 
 }
 
 /// Advance `L` independent catchment candidates day by day over the shared
-/// forcing. Each lane runs its day step and then its scoring, as the scalar
-/// path does.
-fn catchment_lanes<const L: usize, const METRICS: bool>(
+/// forcing. The frozen or thawed branch is taken once per day for all lanes;
+/// each lane then runs its day steps and its scoring, as the scalar path
+/// does. Every lane's exponent must belong to class `EXP`.
+fn catchment_lanes<const L: usize, const METRICS: bool, const EXP: u8>(
     forcing: &[Day],
     lanes: &[(usize, CatchmentParameters)],
 ) -> Vec<CatchmentState> {
@@ -708,12 +777,53 @@ fn catchment_lanes<const L: usize, const METRICS: bool>(
     let mut states = [CatchmentState::default(); L];
     for d in forcing {
         let mut runoff = [0.0; L];
-        for l in 0..L {
-            runoff[l] = catchment_day::<METRICS>(&mut states[l], &p[l], d).runoff;
+        if d.temperature_c <= 0.0 {
+            for l in 0..L {
+                let before = day_start::<METRICS>(&states[l]);
+                let (liquid, recharge) = freeze(&mut states[l], d);
+                runoff[l] =
+                    day_finish::<METRICS>(&mut states[l], &p[l], d, before, liquid, recharge)
+                        .runoff;
+            }
+        } else {
+            for l in 0..L {
+                let before = day_start::<METRICS>(&states[l]);
+                let (liquid, recharge) = thaw::<EXP>(&mut states[l], &p[l], d);
+                runoff[l] =
+                    day_finish::<METRICS>(&mut states[l], &p[l], d, before, liquid, recharge)
+                        .runoff;
+            }
         }
         for l in 0..L {
             score_day::<METRICS>(&mut states[l].folds, d, runoff[l]);
         }
     }
     states.to_vec()
+}
+
+/// Run one chunk of same-class lanes through the matching kernel.
+fn catchment_chunk(
+    forcing: &[Day],
+    chunk: &[(usize, CatchmentParameters)],
+    metrics: bool,
+    class: u8,
+) -> Vec<CatchmentState> {
+    macro_rules! widths {
+        ($metrics:literal, $class:expr) => {
+            match chunk.len() {
+                8 => catchment_lanes::<8, $metrics, $class>(forcing, chunk),
+                4 => catchment_lanes::<4, $metrics, $class>(forcing, chunk),
+                2 => catchment_lanes::<2, $metrics, $class>(forcing, chunk),
+                _ => catchment_lanes::<1, $metrics, $class>(forcing, chunk),
+            }
+        };
+    }
+    match (metrics, class) {
+        (false, LINEAR) => widths!(false, LINEAR),
+        (false, QUADRATIC) => widths!(false, QUADRATIC),
+        (false, _) => widths!(false, DYNAMIC),
+        (true, LINEAR) => widths!(true, LINEAR),
+        (true, QUADRATIC) => widths!(true, QUADRATIC),
+        (true, _) => widths!(true, DYNAMIC),
+    }
 }

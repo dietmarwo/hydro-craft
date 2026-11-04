@@ -121,3 +121,39 @@ and the catchment about 3x faster per day.
   round 6 before.
 - Expected: a decode micro-benchmark of this shape went from 1.03 ms to
   0.76 ms, so about 1.2x on the whole call.
+
+## Round 8: size worker dispatch by CPUs and batch work
+
+- Change: `workers` becomes an upper bound. A batch runs on at most
+  `min(workers, groups, available CPUs, 1 + candidate_days / 8192)`
+  evaluators, where candidate-days are candidates times simulated days
+  and the CPU count (affinity and cgroup quota) is read once per
+  process. Results and record order are unchanged; only how many pool
+  helpers are woken changes.
+- Workload: `parallel` (96 full records, four workers requested on the
+  2-vCPU host), round 7 before. The batch has 8,640 candidate-days, so
+  it now runs on two evaluators instead of four.
+- Expected: a matrix probe of this batch size took 59 us with four
+  workers and 53 us with two; full records add serial JSON work, so
+  about 1.05-1.1x.
+- Outcome: rejected. Median 0.186 ms before, 0.188 ms after (0.99x);
+  timing in `rejected/round08-parallel-dispatch-sizing.json`. The code
+  was reverted.
+
+## Round 8 (second attempt): hoisted temperature branch and exponent-class lanes
+
+- Change: the catchment lane kernel takes the frozen or thawed branch
+  once per day for the whole group instead of once per lane. Valid
+  candidates are partitioned by recharge exponent: groups whose
+  exponent is exactly 1 or 2 get a branch-free thawed step that computes
+  recharge and selects zero on days without liquid water (the same
+  value the scalar path produces by skipping it); other exponents keep
+  the per-lane check that skips the power call. Lean groups of a known
+  class run eight lanes, others four. The scalar path composes the same
+  step functions, so results stay bit-identical. Engine groups grow to
+  eight catchment candidates.
+- Workload: lean `domain` (48 catchment scores of 2,400 days, exponent
+  1), round 7 before.
+- Expected: a micro-benchmark of the specialized kernel ran 4.1 ns per
+  candidate-day at eight lanes against 7.1 ns for the current four-lane
+  kernel, so about 1.4x on the lean call.
