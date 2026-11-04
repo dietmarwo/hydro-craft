@@ -1,0 +1,102 @@
+{
+  "analytic_tests": 4,
+  "candidate_count": 11,
+  "folds": {
+    "test": {
+      "observations": 27,
+      "rmse_mm": 7.925698815375433e-16,
+      "volume_bias_mm": 1.2434497875801753e-14
+    },
+    "train": {
+      "observations": 20,
+      "rmse_mm": 4.965068306494546e-16,
+      "volume_bias_mm": 3.9968028886505635e-15
+    },
+    "validation": {
+      "observations": 27,
+      "rmse_mm": 6.280369834735101e-16,
+      "volume_bias_mm": 8.881784197001252e-15
+    }
+  },
+  "max_daily_balance_mm": 1.4210854715202004e-14,
+  "max_reference_error_mm": 1.7763568394002505e-15,
+  "reservoir_holdout": [
+    {
+      "longest_shortage_days": 2,
+      "max_balance_m3": 0.0,
+      "shortage_days": 8,
+      "shortage_m3": 26.933307347218967,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 0,
+      "max_balance_m3": 0.0,
+      "shortage_days": 0,
+      "shortage_m3": 0.0,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 0,
+      "max_balance_m3": 0.0,
+      "shortage_days": 0,
+      "shortage_m3": 0.0,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 2,
+      "max_balance_m3": 0.0,
+      "shortage_days": 6,
+      "shortage_m3": 21.944249284280005,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 0,
+      "max_balance_m3": 0.0,
+      "shortage_days": 0,
+      "shortage_m3": 0.0,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 7,
+      "max_balance_m3": 0.0,
+      "shortage_days": 7,
+      "shortage_m3": 30.702896283950402,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 0,
+      "max_balance_m3": 0.0,
+      "shortage_days": 0,
+      "shortage_m3": 0.0,
+      "spill_m3": 0.0,
+      "trace": null
+    },
+    {
+      "longest_shortage_days": 1,
+      "max_balance_m3": 0.0,
+      "shortage_days": 1,
+      "shortage_m3": 8.444635404090448,
+      "spill_m3": 0.0,
+      "trace": null
+    }
+  ],
+  "reservoir_policy": [
+    0.35,
+    0
+  ],
+  "truth": [
+    10,
+    1,
+    1,
+    0.5,
+    0.3,
+    2,
+    3
+  ]
+}
