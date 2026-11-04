@@ -1,0 +1,15 @@
+scored 441 policies x 3 scenarios in 3.1 ms
+
+scenario best target  best gain         cost
+dry             0.00       0.00     13223642
+normal          0.90       1.00       223429
+wet             0.45       0.20      1007433
+
+minimax-regret rule: target 0.85, gain 1.00, worst regret 177031 (cost units: m3 shortage + 0.05 m3 spill)
+
+scenario         cost  shortage m3  short days  longest     spill m3  balance
+dry          13223642     13223642         511      176            0  0.0e+00
+normal         400070       192238          20       10      4156637  4.7e-10
+wet           1184465            0           0        0     23689297  4.7e-10
+
+Decisions use the previous day's storage only, so the rule is non-anticipatory.

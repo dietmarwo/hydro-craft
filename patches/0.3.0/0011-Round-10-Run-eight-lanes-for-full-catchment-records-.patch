@@ -1,0 +1,111 @@
+From c8e3aebe2e625dd53f0267ab2efd4da35ee80d7e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:02:12 -0400
+Subject: [PATCH 11/18] Round 10: Run eight lanes for full catchment records of
+ a known class
+
+Full catchment records whose recharge exponent is exactly 1 or 2 now
+run in groups of up to eight lanes, like lean scores; the dynamic
+class, with its power call, keeps four. The step functions are
+unchanged, so results are bit-identical; the existing uniform-class
+lane tests cover the new widths in full mode.
+
+Workload: domain (48 full catchment records of 2,400 days), 11 samples
+against round 9.
+Before median: 1.178 ms. After median: 0.776 ms. Speedup: 1.52x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            | 11 ++++++
+ .../performance-0.3.0/round10-domain.json     | 36 +++++++++++++++++++
+ src/domain.rs                                 |  6 ++--
+ 3 files changed, 50 insertions(+), 3 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round10-domain.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 6221552..4079cb4 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -168,3 +168,14 @@ and the catchment about 3x faster per day.
+   before.
+ - Expected: an exploratory build with sixteen lanes ran the lean call
+   in about 0.39 ms against 0.51 ms, so about 1.3x.
++
++## Round 10: eight lanes for full catchment records of a known class
++
++- Change: full catchment records whose exponent is exactly 1 or 2 run
++  in groups of up to eight lanes, like lean scores; the dynamic class
++  keeps four. The step functions are unchanged, so results stay
++  bit-identical.
++- Workload: `domain` (48 full catchment records of 2,400 days), round 9
++  before.
++- Expected: an exploratory build ran this call in about 0.74-1.1 ms
++  against 1.2-1.6 ms, so about 1.2x.
+diff --git a/evidence/performance-0.3.0/round10-domain.json b/evidence/performance-0.3.0/round10-domain.json
+new file mode 100644
+index 0000000..ecb962f
+--- /dev/null
++++ b/evidence/performance-0.3.0/round10-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0011993882,
++    0.0009609217999999999,
++    0.0009311669999999999,
++    0.001178084,
++    0.001116172,
++    0.0013154888,
++    0.0011477596,
++    0.0012611544000000001,
++    0.0011303580000000001,
++    0.0011891926000000001,
++    0.0012362386
++  ],
++  "after_seconds": [
++    0.0008159612,
++    0.0009202171999999999,
++    0.000795532,
++    0.0007597594,
++    0.000763648,
++    0.000781662,
++    0.0007602772,
++    0.000755648,
++    0.0007755272,
++    0.0008154741999999999,
++    0.0007670282
++  ],
++  "medians_seconds": [
++    0.001178084,
++    0.0007755272
++  ],
++  "speedup": 1.5190750240610518
++}
+diff --git a/src/domain.rs b/src/domain.rs
+index 23d3a4a..4a696e7 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -454,15 +454,15 @@ pub fn evaluate_lanes(
+                     Err(e) => results.push((Err(e), 0)),
+                 }
+             }
+-            // Lanes of one exponent class share a kernel. Lean runs of a known
+-            // class use up to eight lanes; the others use up to four.
++            // Lanes of one exponent class share a kernel. A known class uses up
++            // to eight lanes; the dynamic class, with its power call, four.
+             for class in [LINEAR, QUADRATIC, DYNAMIC] {
+                 let lanes: Vec<_> = valid
+                     .iter()
+                     .filter(|(_, p)| exponent_class(p.exponent) == class)
+                     .copied()
+                     .collect();
+-                let widest = if metrics || class == DYNAMIC { 4 } else { 8 };
++                let widest = if class == DYNAMIC { 4 } else { 8 };
+                 let mut rest = lanes.as_slice();
+                 while !rest.is_empty() {
+                     let width = [8, 4, 2, 1]
+-- 
+2.43.0
+

@@ -1,0 +1,269 @@
+From d9147d067d9a20bbb43895718d8b92f4ae74bc6c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:52:59 -0400
+Subject: [PATCH 08/18] Round 7: Borrow candidate IDs and size parameter
+ vectors exactly
+
+Candidate IDs now deserialize as Cow<str> borrowed from the request
+text unless the JSON string has escapes, and parameter arrays are
+collected in a 64-value stack buffer and copied once into an exactly
+sized vector instead of a doubling Vec. Longer arrays still parse and
+are rejected by the existing batch check. A new test compares values,
+bits and every error message with the plain derive of 0.2.0 and checks
+duplicate detection across escaped IDs.
+
+Workload: invalid (1,024 full records with 63 parameters each), 11
+samples against round 6.
+Before median: 1.465 ms. After median: 1.262 ms. Speedup: 1.16x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            |  13 ++
+ .../performance-0.3.0/round07-invalid.json    |  36 ++++++
+ src/lib.rs                                    | 116 ++++++++++++++++--
+ 3 files changed, 157 insertions(+), 8 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round07-invalid.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index d6727b4..4db0fb9 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -108,3 +108,16 @@ and the catchment about 3x faster per day.
+   before.
+ - Expected: the micro-benchmark ran four interleaved catchment lanes
+   about 3x faster per day than one at exponent 1, so at least 2x.
++
++## Round 7: borrowed IDs and exact-size parameter vectors
++
++- Change: candidate IDs deserialize as `Cow<str>` borrowed from the
++  request text, and parameter arrays are collected in a 64-value stack
++  buffer and copied once into an exactly sized vector, instead of one
++  `String` per ID and a doubling `Vec<f64>`. Longer arrays still parse
++  and are rejected by the existing batch check; error messages match the
++  plain derive.
++- Workload: `invalid` (1,024 full records with 63 parameters each),
++  round 6 before.
++- Expected: a decode micro-benchmark of this shape went from 1.03 ms to
++  0.76 ms, so about 1.2x on the whole call.
+diff --git a/evidence/performance-0.3.0/round07-invalid.json b/evidence/performance-0.3.0/round07-invalid.json
+new file mode 100644
+index 0000000..82908f7
+--- /dev/null
++++ b/evidence/performance-0.3.0/round07-invalid.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "invalid",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0017583594999999999,
++    0.0011904258333333333,
++    0.001189905,
++    0.0014646103333333332,
++    0.001460764,
++    0.001466462,
++    0.0014326606666666666,
++    0.0011443833333333333,
++    0.0023830511666666668,
++    0.0027167965000000002,
++    0.0021866108333333336
++  ],
++  "after_seconds": [
++    0.0018057928333333334,
++    0.0012562456666666666,
++    0.0012543578333333333,
++    0.0012380006666666667,
++    0.0012264635,
++    0.0012623731666666666,
++    0.0012590256666666667,
++    0.001272867,
++    0.002155827,
++    0.0019861258333333334,
++    0.002085028
++  ],
++  "medians_seconds": [
++    0.0014646103333333332,
++    0.0012623731666666666
++  ],
++  "speedup": 1.1602039492020255
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index d243f7b..3d97943 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,10 +1,14 @@
+ mod domain;
+ mod pool;
+ 
+-use serde::{Deserialize, Serialize};
++use serde::{
++    Deserialize, Deserializer, Serialize,
++    de::{SeqAccess, Visitor},
++};
+ use serde_json::{Value, json, value::RawValue};
+ use sha2::{Digest, Sha256};
+ use std::{
++    borrow::Cow,
+     collections::HashSet,
+     ops::Range,
+     path::PathBuf,
+@@ -38,13 +42,48 @@ pub fn infeasible(detail: impl Into<String>) -> Failure {
+ 
+ #[derive(Clone, Deserialize)]
+ #[serde(deny_unknown_fields)]
+-pub struct Candidate {
+-    pub id: String,
++pub struct Candidate<'a> {
++    /// Borrowed from the request text unless the JSON string has escapes.
++    #[serde(borrow)]
++    pub id: Cow<'a, str>,
++    #[serde(deserialize_with = "exact_parameters")]
+     pub parameters: Vec<f64>,
+     #[serde(default)]
+     pub trace: bool,
+ }
+ 
++/// Deserialize a parameter array into a vector allocated once at its exact
++/// length. Values are collected in a stack buffer of the 64-value limit
++/// first; longer arrays continue on the heap and are rejected later by the
++/// batch checks, as before. Element errors are those of `Vec<f64>`.
++fn exact_parameters<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error> {
++    struct Exact;
++    impl<'de> Visitor<'de> for Exact {
++        type Value = Vec<f64>;
++        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
++            formatter.write_str("a sequence")
++        }
++        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<f64>, A::Error> {
++            let mut buffer = [0.0_f64; DIMENSION_LIMIT];
++            let mut len = 0;
++            while let Some(value) = seq.next_element::<f64>()? {
++                if len == DIMENSION_LIMIT {
++                    let mut long = buffer.to_vec();
++                    long.push(value);
++                    while let Some(value) = seq.next_element::<f64>()? {
++                        long.push(value);
++                    }
++                    return Ok(long);
++                }
++                buffer[len] = value;
++                len += 1;
++            }
++            Ok(buffer[..len].to_vec())
++        }
++    }
++    deserializer.deserialize_seq(Exact)
++}
++
+ #[derive(Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ pub struct Budget {
+@@ -361,7 +400,7 @@ impl Prepared {
+ 
+     fn evaluate_encoded(
+         &self,
+-        candidates: Vec<Candidate>,
++        candidates: Vec<Candidate<'_>>,
+         budget: Budget,
+         metrics_enabled: bool,
+     ) -> Result<String, String> {
+@@ -389,7 +428,7 @@ impl Prepared {
+         (result, work.used)
+     }
+ 
+-    fn record(c: &Candidate, result: Evaluation, steps: u64) -> Record<'_> {
++    fn record<'a>(c: &'a Candidate<'_>, result: Evaluation, steps: u64) -> Record<'a> {
+         match result {
+             Ok((score, metrics)) => Record {
+                 id: &c.id,
+@@ -412,7 +451,7 @@ impl Prepared {
+ 
+     fn evaluate<'a>(
+         &'a self,
+-        candidates: &'a [Candidate],
++        candidates: &'a [Candidate<'_>],
+         budget: Budget,
+         metrics_enabled: bool,
+     ) -> Result<Batch<'a>, String> {
+@@ -453,10 +492,11 @@ impl Prepared {
+ 
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+-struct Request {
++struct Request<'a> {
+     schema: String,
+     model: Box<RawValue>,
+-    candidates: Vec<Candidate>,
++    #[serde(borrow)]
++    candidates: Vec<Candidate<'a>>,
+     #[serde(default)]
+     budget: Budget,
+ }
+@@ -857,4 +897,64 @@ mod tests {
+         }
+         assert_lanes_match_scalar(&cold, &rows);
+     }
++
++    /// Borrowed IDs and exact-size parameters decode like the plain derive
++    /// of 0.2.0, including every error message.
++    #[test]
++    fn candidate_decoding_matches_plain_derive() {
++        #[derive(Deserialize)]
++        #[serde(deny_unknown_fields)]
++        #[allow(dead_code)]
++        struct Plain {
++            id: String,
++            parameters: Vec<f64>,
++            #[serde(default)]
++            trace: bool,
++        }
++        let long: Vec<f64> = (0..70).map(f64::from).collect();
++        for text in [
++            r#"[{"id":"a","parameters":[1,2.5,-0,-0.0,1e300]}]"#.to_string(),
++            r#"[{"id":"a\"b","parameters":[],"trace":true}]"#.to_string(),
++            json!([{"id":"x","parameters":long}]).to_string(),
++            r#"[{"id":"a","parameters":"x"}]"#.to_string(),
++            r#"[{"id":"a","parameters":null}]"#.to_string(),
++            r#"[{"id":"a","parameters":{}}]"#.to_string(),
++            r#"[{"id":"a","parameters":[1,"b"]}]"#.to_string(),
++            r#"[{"id":"a","parameters":[1,]}]"#.to_string(),
++            r#"[{"id":"a","parameters":[1e999]}]"#.to_string(),
++            r#"[{"id":"a"}]"#.to_string(),
++            r#"[{"id":7,"parameters":[]}]"#.to_string(),
++            r#"[{"id":"a","parameters":[],"extra":1}]"#.to_string(),
++            r#"[{"id":"a","parameters":[],"parameters":[]}]"#.to_string(),
++        ] {
++            let ours = serde_json::from_str::<Vec<Candidate>>(&text);
++            let plain = serde_json::from_str::<Vec<Plain>>(&text);
++            match (ours, plain) {
++                (Ok(ours), Ok(plain)) => {
++                    for (a, b) in ours.iter().zip(&plain) {
++                        assert_eq!(a.id, b.id);
++                        assert_eq!(a.trace, b.trace);
++                        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
++                        assert_eq!(bits(&a.parameters), bits(&b.parameters), "{text}");
++                        if a.parameters.len() <= DIMENSION_LIMIT {
++                            assert_eq!(a.parameters.capacity(), a.parameters.len());
++                        }
++                    }
++                }
++                (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string(), "{text}"),
++                _ => panic!("decoders disagree on {text}"),
++            }
++        }
++        let example = fixture();
++        let prepared = Prepared::new(&example["model"].to_string()).unwrap();
++        let escaped = r#"[{"id":"a","parameters":[]},{"id":"a","parameters":[]}]"#;
++        assert!(prepared.scores_json(escaped, "{}").is_err());
++        let limit = json!([{"id":"x","parameters":vec![1.0; 64]}]).to_string();
++        assert!(prepared.scores_json(&limit, "{}").is_ok());
++        let over = json!([{"id":"x","parameters":vec![1.0; 65]}]).to_string();
++        assert_eq!(
++            prepared.scores_json(&over, "{}").unwrap_err(),
++            "invalid or duplicate candidate id, or parameter vector exceeds limit"
++        );
++    }
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,810 @@
+From 349e45111bcf92753995285246bfdf0955ecdc8b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:10:52 -0400
+Subject: [PATCH 14/18] Add application and optimization examples
+
+Add three application examples (catchment sensitivity with
+one-at-a-time and Morris screening, warming scenarios with traced runs,
+and a minimax-regret reservoir policy study) and three optimization
+examples (SciPy vectorized differential evolution, fcmaes CMA-ES
+ask/tell with whole populations through score_matrix, and fcmaes
+BiteOpt and C++ CMA-ES minimizers with failure penalties), sharing
+seeded synthetic inputs. run_examples.py refreshes the saved outputs.
+A Rust example screens reservoir rules through Prepared::score_matrix.
+All outputs come from runs of the installed 0.3.0 wheel.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ examples/matrix.rs                            | 58 +++++++++++++
+ examples/outputs/matrix.txt                   |  2 +
+ examples/python/README.md                     | 40 +++++++++
+ examples/python/catchment_sensitivity.py      | 75 ++++++++++++++++
+ examples/python/fcmaes_cmaes_population.py    | 56 ++++++++++++
+ examples/python/fcmaes_robust_policy.py       | 62 ++++++++++++++
+ .../python/outputs/catchment_sensitivity.txt  | 24 ++++++
+ .../outputs/fcmaes_cmaes_population.txt       |  4 +
+ .../python/outputs/fcmaes_robust_policy.txt   |  7 ++
+ .../python/outputs/reservoir_policy_study.txt | 15 ++++
+ examples/python/outputs/scipy_calibration.txt | 19 +++++
+ examples/python/outputs/warming_scenarios.txt |  9 ++
+ examples/python/reservoir_policy_study.py     | 50 +++++++++++
+ examples/python/run_examples.py               | 40 +++++++++
+ examples/python/scipy_calibration.py          | 65 ++++++++++++++
+ examples/python/synthetic.py                  | 85 +++++++++++++++++++
+ examples/python/warming_scenarios.py          | 41 +++++++++
+ 17 files changed, 652 insertions(+)
+ create mode 100644 examples/matrix.rs
+ create mode 100644 examples/outputs/matrix.txt
+ create mode 100644 examples/python/README.md
+ create mode 100644 examples/python/catchment_sensitivity.py
+ create mode 100644 examples/python/fcmaes_cmaes_population.py
+ create mode 100644 examples/python/fcmaes_robust_policy.py
+ create mode 100644 examples/python/outputs/catchment_sensitivity.txt
+ create mode 100644 examples/python/outputs/fcmaes_cmaes_population.txt
+ create mode 100644 examples/python/outputs/fcmaes_robust_policy.txt
+ create mode 100644 examples/python/outputs/reservoir_policy_study.txt
+ create mode 100644 examples/python/outputs/scipy_calibration.txt
+ create mode 100644 examples/python/outputs/warming_scenarios.txt
+ create mode 100644 examples/python/reservoir_policy_study.py
+ create mode 100644 examples/python/run_examples.py
+ create mode 100644 examples/python/scipy_calibration.py
+ create mode 100644 examples/python/synthetic.py
+ create mode 100644 examples/python/warming_scenarios.py
+
+diff --git a/examples/matrix.rs b/examples/matrix.rs
+new file mode 100644
+index 0000000..9ca777f
+--- /dev/null
++++ b/examples/matrix.rs
+@@ -0,0 +1,58 @@
++//! Screen reservoir release rules through the typed score-matrix API.
++//!
++//! Run: `cargo run --release --example matrix`
++use hydro_craft::Prepared;
++use serde_json::{Value, json};
++
++fn main() -> Result<(), String> {
++    // Two years of seasonal inflow, demand and evaporation in cubic metres.
++    let inputs: Vec<Value> = (0..730)
++        .map(|day| {
++            let phase = f64::from(day % 365) / 365.0 * std::f64::consts::TAU;
++            json!({
++                "inflow_m3": (58_000.0 + 45_000.0 * (phase - 1.0).sin()).max(0.0),
++                "evaporation_m3": 1_500.0 + 1_200.0 * (-phase.cos()).max(0.0),
++                "demand_m3": 42_000.0 + 22_000.0 * (-phase.cos()).max(0.0),
++            })
++        })
++        .collect();
++    let model = json!({"kind": "reservoir", "capacity_m3": 4.0e6, "initial_m3": 2.0e6,
++                       "outlet_m3_per_day": 70_000.0, "reserve_m3": 0.6e6, "inputs": inputs});
++    let prepared = Prepared::new(&model.to_string())?;
++
++    // A 41 x 41 grid of (target fraction, release gain) rows, stored row-major,
++    // plus one row outside the valid controls.
++    let mut parameters = Vec::new();
++    for target in 0..=40 {
++        for gain in 0..=40 {
++            parameters.extend([f64::from(target) / 40.0, f64::from(gain) / 40.0]);
++        }
++    }
++    parameters.extend([1.5, 0.5]);
++    let rows = parameters.len() / 2;
++    let scores = prepared.score_matrix(rows, &parameters, r#"{"workers": 2}"#)?;
++
++    let invalid = scores.iter().filter(|s| s.status == "invalid").count();
++    let (best, score) = scores
++        .iter()
++        .enumerate()
++        .filter_map(|(row, s)| s.score.map(|score| (row, score)))
++        .min_by(|a, b| a.1.total_cmp(&b.1))
++        .ok_or("no complete row")?;
++    let rule = &parameters[2 * best..2 * best + 2];
++    println!(
++        "{rows} rows, {invalid} invalid; best row {best}: target {:.3}, gain {:.3}, cost {score:.1}, steps {}",
++        rule[0], rule[1], scores[best].steps
++    );
++
++    // Replay the winner as a full JSON record for its diagnostics.
++    let replay = prepared.evaluate_json(
++        &json!([{"id": "best", "parameters": rule}]).to_string(),
++        "{}",
++    )?;
++    let replay: Value = serde_json::from_str(&replay).map_err(|e| e.to_string())?;
++    let record = &replay["records"][0];
++    assert_eq!(record["score"].as_f64(), Some(score));
++    println!("metrics: {}", record["metrics"]);
++    Ok(())
++}
+diff --git a/examples/outputs/matrix.txt b/examples/outputs/matrix.txt
+new file mode 100644
+index 0000000..606f6d1
+--- /dev/null
++++ b/examples/outputs/matrix.txt
+@@ -0,0 +1,2 @@
++1682 rows, 1 invalid; best row 1458: target 0.875, gain 0.575, cost 161777.7, steps 730
++metrics: {"longest_shortage_days":0,"max_balance_m3":4.656612873077393e-10,"shortage_days":0,"shortage_m3":0.0,"spill_m3":3235554.550068734,"trace":null}
+diff --git a/examples/python/README.md b/examples/python/README.md
+new file mode 100644
+index 0000000..3dd136b
+--- /dev/null
++++ b/examples/python/README.md
+@@ -0,0 +1,40 @@
++# hydro-craft examples
++
++Runnable examples for the installed `hydro_craft` package (0.3.0). All
++inputs are seeded synthetic data from [`synthetic.py`](synthetic.py): a
++snowy catchment with four years of daily forcing and noisy synthetic
++observations, and an irrigation reservoir with dry, normal and wet
++inflow scenarios. Run any example from the repository root, for example
++`python examples/python/warming_scenarios.py`, or run all of them and
++refresh the saved outputs with `python examples/python/run_examples.py`.
++
++The optimization examples need SciPy 1.17 and fcmaes 2.1.0
++(`pip install scipy==1.17.0 fcmaes`); the application examples need
++only the package. Each example finishes in about a second on a 2-vCPU
++host. The saved outputs in [`outputs/`](outputs/) come from actual runs
++with CPython 3.12; timing lines vary from run to run.
++
++## Application examples
++
++| Example | Question | APIs | Output |
++| --- | --- | --- | --- |
++| [`catchment_sensitivity.py`](catchment_sensitivity.py) | Which catchment parameters control the fit and the water balance? One-at-a-time perturbations and Morris elementary effects. | `batch`, `score_matrix` | [txt](outputs/catchment_sensitivity.txt) |
++| [`warming_scenarios.py`](warming_scenarios.py) | How do +1, +2 and +4 degC shift peak snow, melt timing, runoff and peak discharge? | `batch` with `trace` | [txt](outputs/warming_scenarios.txt) |
++| [`reservoir_policy_study.py`](reservoir_policy_study.py) | Which release rule has the smallest worst-case regret across dry, normal and wet years? | `score_matrix(workers=2)`, `evaluate` | [txt](outputs/reservoir_policy_study.txt) |
++
++## Optimization examples
++
++| Example | Optimizer | Failure handling | Output |
++| --- | --- | --- | --- |
++| [`scipy_calibration.py`](scipy_calibration.py) | SciPy `differential_evolution(vectorized=True)`; one `score_matrix` call per generation | Search box allows `lp` up to 1.2; invalid rows get `1e3 * (1 + distance outside limits)` | [txt](outputs/scipy_calibration.txt) |
++| [`fcmaes_cmaes_population.py`](fcmaes_cmaes_population.py) | fcmaes `cmaes.Cmaes` ask/tell; each population is one `score_matrix` call with two native workers | Same graded penalty before `tell` | [txt](outputs/fcmaes_cmaes_population.txt) |
++| [`fcmaes_robust_policy.py`](fcmaes_robust_policy.py) | fcmaes `bitecpp.minimize` (BiteOpt) and `cmaescpp.minimize` on the mean cost over three scenarios | Controls searched in [0, 1.25]; invalid rows get `1e8 * (1 + distance outside [0, 1])` | [txt](outputs/fcmaes_robust_policy.txt) |
++
++## Rust
++
++[`../matrix.rs`](../matrix.rs) screens a 41 x 41 grid of reservoir rules
++plus one invalid row through `Prepared::score_matrix` and replays the
++winner as a full JSON record: `cargo run --release --example matrix`.
++Its output is in [`../outputs/matrix.txt`](../outputs/matrix.txt).
++
++See the [user manual](../../docs/user-manual.md) for the full API.
+diff --git a/examples/python/catchment_sensitivity.py b/examples/python/catchment_sensitivity.py
+new file mode 100644
+index 0000000..c236a17
+--- /dev/null
++++ b/examples/python/catchment_sensitivity.py
+@@ -0,0 +1,75 @@
++"""Which catchment parameters control the fit and the water balance?
++
++Application: local and global sensitivity of a calibrated catchment.
++
++1. One-at-a-time: perturb each parameter by -25 %, -10 %, +10 % and +25 %
++   of the calibrated value and read train RMSE and test-fold volume bias
++   from full records (``Prepared.batch``).
++2. Morris elementary effects: 20 random trajectories over the plausible
++   search box, scored through ``Prepared.score_matrix`` without JSON.
++
++Run: python examples/python/catchment_sensitivity.py
++"""
++
++import random
++import statistics
++import time
++
++import synthetic as s
++from hydro_craft import Prepared
++
++model = s.calibration_case()
++prepared = Prepared(model)
++base = s.TRUTH
++reference = prepared.evaluate(base)
++assert reference["status"] == "complete", reference
++ref_test = reference["metrics"]["test"]["volume_bias_mm"]
++print(f"forcing days: {len(model['forcing'])}, model sha256: {prepared.batch([{'id': 'x', 'parameters': base}])['model_sha256'][:16]}...")
++print(f"reference train RMSE {reference['score']:.4f} mm/day, test volume bias {ref_test:.2f} mm\n")
++
++# 1. One-at-a-time perturbations, one full-record batch per parameter.
++print("One-at-a-time (train RMSE in mm/day; change of test volume bias in mm)")
++print(f"{'parameter':<12} {'-25%':>9} {'-10%':>9} {'+10%':>9} {'+25%':>9}   d(test bias) at +10%")
++for k, name in enumerate(s.NAMES):
++    candidates = []
++    for factor in (0.75, 0.9, 1.1, 1.25):
++        x = list(base)
++        lo, hi = s.LIMITS[k]
++        x[k] = min(max(x[k] * factor, lo), hi)
++        candidates.append({"id": f"{name}{factor}", "parameters": x})
++    rows = prepared.batch(candidates)["records"]
++    assert all(r["status"] == "complete" for r in rows), rows
++    rmse = " ".join(f"{r['score']:9.4f}" for r in rows)
++    shift = rows[2]["metrics"]["test"]["volume_bias_mm"] - ref_test
++    print(f"{name:<12} {rmse}   {shift:+8.2f}")
++
++# 2. Morris screening on the training RMSE.
++rng = random.Random(42)
++levels, trajectories, delta = 8, 20, 4 / 7
++dim = len(s.NAMES)
++effects = [[] for _ in range(dim)]
++start = time.perf_counter()
++calls = 0
++for _ in range(trajectories):
++    unit = [rng.randrange(levels - 4) / (levels - 1) for _ in range(dim)]
++    order = list(range(dim))
++    rng.shuffle(order)
++    points = [list(unit)]
++    for k in order:
++        unit[k] += delta
++        points.append(list(unit))
++    rows = [[lo + u * (hi - lo) for u, (lo, hi) in zip(p, s.BOUNDS, strict=True)] for p in points]
++    scores, statuses, _ = prepared.score_matrix(rows)
++    calls += len(rows)
++    assert all(status == "complete" for status in statuses), statuses
++    for step, k in enumerate(order):
++        effects[k].append((scores[step + 1] - scores[step]) / delta)
++elapsed = time.perf_counter() - start
++print(f"\nMorris elementary effects on train RMSE ({trajectories} trajectories, {calls} runs, {elapsed * 1e3:.1f} ms)")
++print(f"{'parameter':<12} {'mu*':>9} {'sigma':>9}")
++ranking = sorted(range(dim), key=lambda k: -statistics.mean(abs(e) for e in effects[k]))
++for k in ranking:
++    mu_star = statistics.mean(abs(e) for e in effects[k])
++    sigma = statistics.stdev(effects[k])
++    print(f"{s.NAMES[k]:<12} {mu_star:9.4f} {sigma:9.4f}")
++print("\nLarge mu* means influential; sigma comparable to mu* means nonlinear or interacting.")
+diff --git a/examples/python/fcmaes_cmaes_population.py b/examples/python/fcmaes_cmaes_population.py
+new file mode 100644
+index 0000000..e0c97a8
+--- /dev/null
++++ b/examples/python/fcmaes_cmaes_population.py
+@@ -0,0 +1,56 @@
++"""Calibrate the catchment with fcmaes CMA-ES, one native call per generation.
++
++Optimization with fcmaes ask/tell: ``fcmaes.cmaes.Cmaes.ask`` returns a
++whole population as a 2-D NumPy array, which ``score_matrix`` evaluates
++with two native workers and without JSON. Rows that are not complete
++(here: ``lp`` above the model limit of 1.0) get a graded penalty before
++``tell``. The sampler is seeded, so the run is reproducible.
++
++Run: python examples/python/fcmaes_cmaes_population.py
++"""
++
++from collections import Counter
++import time
++
++from loguru import logger
++import numpy as np
++from scipy.optimize import Bounds
++
++from fcmaes import cmaes
++import synthetic as s
++from hydro_craft import Prepared
++
++logger.remove()
++prepared = Prepared(s.calibration_case())
++lower = [lo for lo, _ in s.BOUNDS]
++upper = [hi for _, hi in s.BOUNDS]
++upper[2] = 1.2  # lp above 1.0 is outside the model limits
++rng = np.random.default_rng(3)
++es = cmaes.Cmaes(bounds=Bounds(lower, upper), x0=[(a + b) / 2 for a, b in zip(lower, upper)],
++                 input_sigma=0.3, popsize=32, max_evaluations=8000, rg=rng,
++                 randn=lambda *shape: rng.standard_normal(shape))
++statuses_seen = Counter()
++best = (float("inf"), None)
++generations = 0
++start = time.perf_counter()
++while True:
++    xs = es.ask()
++    scores, statuses, steps = prepared.score_matrix(xs, workers=2)
++    statuses_seen.update(statuses)
++    ys = np.array(scores)
++    for i, status in enumerate(statuses):
++        if status != "complete":
++            ys[i] = 1e3 * (1.0 + s.violation(xs[i]))
++    i = int(np.argmin(ys))
++    if ys[i] < best[0]:
++        best = (float(ys[i]), xs[i].copy())
++    generations += 1
++    if es.tell(ys) != 0 or generations * es.popsize >= 8000:
++        break
++elapsed = time.perf_counter() - start
++print(f"{generations} generations of {es.popsize} in {elapsed:.2f} s; statuses {dict(statuses_seen)}")
++print(f"best train RMSE {best[0]:.5f} mm/day")
++row = prepared.evaluate(best[1].tolist())
++print("validation RMSE {:.4f}, test RMSE {:.4f} mm/day".format(
++    row["metrics"]["validation"]["rmse_mm"], row["metrics"]["test"]["rmse_mm"]))
++print("parameters:", ", ".join(f"{n}={v:.4g}" for n, v in zip(s.NAMES, best[1], strict=True)))
+diff --git a/examples/python/fcmaes_robust_policy.py b/examples/python/fcmaes_robust_policy.py
+new file mode 100644
+index 0000000..841cb8c
+--- /dev/null
++++ b/examples/python/fcmaes_robust_policy.py
+@@ -0,0 +1,62 @@
++"""Find a reservoir rule that is good on average over three inflow scenarios.
++
++Optimization with standard fcmaes minimizers and failure penalties. The
++objective is the mean cost over dry, normal and wet scenarios. The search
++box is [0, 1.25] for both controls, wider than the model's [0, 1], so
++some candidates are ``invalid``; they get a penalty of 1e8 plus 1e8 times
++the distance outside [0, 1]. Each candidate is scored through
++``score_matrix([x])`` once per scenario. The same objective runs with
++BiteOpt (``fcmaes.bitecpp.minimize``) and the C++ CMA-ES
++(``fcmaes.cmaescpp.minimize``).
++
++Run: python examples/python/fcmaes_robust_policy.py
++"""
++
++from collections import Counter
++import time
++
++from loguru import logger
++import numpy as np
++from scipy.optimize import Bounds
++
++from fcmaes import bitecpp, cmaescpp
++import synthetic as s
++from hydro_craft import Prepared
++
++logger.remove()
++scenarios = [Prepared(s.reservoir(name)) for name in ("dry", "normal", "wet")]
++statuses_seen = Counter()
++
++
++def cost(x):
++    total = 0.0
++    for prepared in scenarios:
++        scores, statuses, _ = prepared.score_matrix([list(x)])
++        statuses_seen[statuses[0]] += 1
++        if statuses[0] != "complete":
++            # Same penalty for every scenario: the controls are invalid.
++            return 1e8 * (1.0 + s.violation(x, [(0.0, 1.0), (0.0, 1.0)]))
++        total += scores[0]
++    return total / len(scenarios)
++
++
++bounds = Bounds([0.0, 0.0], [1.25, 1.25])
++for name, minimize in (("bitecpp", bitecpp.minimize), ("cmaescpp", cmaescpp.minimize)):
++    statuses_seen.clear()
++    start = time.perf_counter()
++    if name == "bitecpp":
++        result = minimize(cost, bounds, x0=[1.1, 1.1], max_evaluations=600,
++                          rg=np.random.default_rng(11))
++    else:
++        result = minimize(cost, bounds, x0=[1.1, 1.1], input_sigma=0.3, popsize=16,
++                          max_evaluations=600, rg=np.random.default_rng(11))
++    elapsed = time.perf_counter() - start
++    print(f"{name}: target {result.x[0]:.4f}, gain {result.x[1]:.4f}, mean cost {result.fun:.0f}, "
++          f"{result.nfev} evaluations in {elapsed:.2f} s, scenario statuses {dict(statuses_seen)}")
++
++x = [float(v) for v in result.x]
++print(f"\n{'scenario':<8} {'cost':>11} {'shortage days':>14} {'spill m3':>12}")
++for label, prepared in zip(("dry", "normal", "wet"), scenarios, strict=True):
++    m = prepared.evaluate(x)["metrics"]
++    print(f"{label:<8} {m['shortage_m3'] + 0.05 * m['spill_m3']:11.0f} {m['shortage_days']:14d} "
++          f"{m['spill_m3']:12.0f}")
+diff --git a/examples/python/outputs/catchment_sensitivity.txt b/examples/python/outputs/catchment_sensitivity.txt
+new file mode 100644
+index 0000000..c73a2ee
+--- /dev/null
++++ b/examples/python/outputs/catchment_sensitivity.txt
+@@ -0,0 +1,24 @@
++forcing days: 1460, model sha256: 21e010b22d70e156...
++reference train RMSE 0.2048 mm/day, test volume bias 0.35 mm
++
++One-at-a-time (train RMSE in mm/day; change of test volume bias in mm)
++parameter         -25%      -10%      +10%      +25%   d(test bias) at +10%
++capacity        0.2558    0.2140    0.2106    0.2409      +1.22
++exponent        0.2569    0.2132    0.2088    0.2292      -6.61
++lp              0.2669    0.2164    0.2258    0.3057     +10.09
++kfast           0.3452    0.2372    0.2097    0.2654      -0.24
++kbase           0.2230    0.2068    0.2081    0.2197      -2.47
++percolation     0.2558    0.2152    0.2100    0.2417      +0.60
++degree          1.3080    0.5972    0.4478    0.9588      +0.42
++
++Morris elementary effects on train RMSE (20 trajectories, 160 runs, 3.3 ms)
++parameter          mu*     sigma
++degree          1.5285    1.0762
++kfast           0.6934    0.7739
++capacity        0.2020    0.2743
++percolation     0.1960    0.2079
++exponent        0.1528    0.2680
++kbase           0.1397    0.1708
++lp              0.1381    0.1967
++
++Large mu* means influential; sigma comparable to mu* means nonlinear or interacting.
+diff --git a/examples/python/outputs/fcmaes_cmaes_population.txt b/examples/python/outputs/fcmaes_cmaes_population.txt
+new file mode 100644
+index 0000000..f693266
+--- /dev/null
++++ b/examples/python/outputs/fcmaes_cmaes_population.txt
+@@ -0,0 +1,4 @@
++135 generations of 32 in 0.10 s; statuses {'complete': 4317, 'invalid': 3}
++best train RMSE 0.20084 mm/day
++validation RMSE 0.2444, test RMSE 0.0431 mm/day
++parameters: capacity=204.2, exponent=2.501, lp=0.7345, kfast=0.2616, kbase=0.03031, percolation=2.523, degree=3.501
+diff --git a/examples/python/outputs/fcmaes_robust_policy.txt b/examples/python/outputs/fcmaes_robust_policy.txt
+new file mode 100644
+index 0000000..70e5316
+--- /dev/null
++++ b/examples/python/outputs/fcmaes_robust_policy.txt
+@@ -0,0 +1,7 @@
++bitecpp: target 0.8954, gain 1.0000, mean cost 4883335, 600 evaluations in 0.03 s, scenario statuses {'invalid': 132, 'complete': 1404}
++cmaescpp: target 0.8954, gain 0.9961, mean cost 4883347, 608 evaluations in 0.03 s, scenario statuses {'invalid': 104, 'complete': 1512}
++
++scenario        cost  shortage days     spill m3
++dry         13223642            511            0
++normal        221606              1      4430973
++wet          1204792              0     24095840
+diff --git a/examples/python/outputs/reservoir_policy_study.txt b/examples/python/outputs/reservoir_policy_study.txt
+new file mode 100644
+index 0000000..1b1f33a
+--- /dev/null
++++ b/examples/python/outputs/reservoir_policy_study.txt
+@@ -0,0 +1,15 @@
++scored 441 policies x 3 scenarios in 3.1 ms
++
++scenario best target  best gain         cost
++dry             0.00       0.00     13223642
++normal          0.90       1.00       223429
++wet             0.45       0.20      1007433
++
++minimax-regret rule: target 0.85, gain 1.00, worst regret 177031 (cost units: m3 shortage + 0.05 m3 spill)
++
++scenario         cost  shortage m3  short days  longest     spill m3  balance
++dry          13223642     13223642         511      176            0  0.0e+00
++normal         400070       192238          20       10      4156637  4.7e-10
++wet           1184465            0           0        0     23689297  4.7e-10
++
++Decisions use the previous day's storage only, so the rule is non-anticipatory.
+diff --git a/examples/python/outputs/scipy_calibration.txt b/examples/python/outputs/scipy_calibration.txt
+new file mode 100644
+index 0000000..ebcc26b
+--- /dev/null
++++ b/examples/python/outputs/scipy_calibration.txt
+@@ -0,0 +1,19 @@
++evaluations 10164 in 0.25 s; statuses {'invalid': 198, 'complete': 9966}
++best train RMSE 0.20084 mm/day
++
++parameter        found     truth  unit
++capacity      204.3582  180.0000  mm
++exponent        2.5028    2.2000  -
++lp              0.7347    0.7000  -
++kfast           0.2616    0.2500  1/day
++kbase           0.0303    0.0300  1/day
++percolation     2.5216    2.5000  mm/day
++degree          3.5013    3.5000  mm/(degC day)
++
++fold         RMSE found  RMSE truth  bias found  bias truth
++train            0.2008      0.2048       -5.08        2.56
++validation       0.2444      0.2397        2.59        4.35
++test             0.0431      0.0378       -2.30        0.35
++
++Select on train, check validation, report test once. The noise in the
++synthetic observations limits how closely any parameter set can fit.
+diff --git a/examples/python/outputs/warming_scenarios.txt b/examples/python/outputs/warming_scenarios.txt
+new file mode 100644
+index 0000000..1e614c7
+--- /dev/null
++++ b/examples/python/outputs/warming_scenarios.txt
+@@ -0,0 +1,9 @@
++ warming  peak SWE  peak day  snow days  spring %   runoff       ET    max Q  model sha256
++    degC        mm   of year      >1 mm   Mar-Jun    mm/yr    mm/yr     m3/s
++    +0.0     228.6        59        154      73.6    397.9    535.8    17.98  21e010b22d70
++    +1.0     173.7        53        132      67.1    402.8    539.6    12.29  187f3ae05b72
++    +2.0     120.6        31        105      54.1    403.8    537.1    13.30  4ad02cda0a56
++    +4.0      39.4        31         42      42.1    399.1    536.2     8.19  ca9233f6c81d
++
++The daily water balance closes to rounding in every scenario.
++Mean last-year temperature without warming: 3.91 degC
+diff --git a/examples/python/reservoir_policy_study.py b/examples/python/reservoir_policy_study.py
+new file mode 100644
+index 0000000..9df37c8
+--- /dev/null
++++ b/examples/python/reservoir_policy_study.py
+@@ -0,0 +1,50 @@
++"""Which release rule works across dry, normal and wet inflow years?
++
++Application: policy screening under scenario uncertainty. A 21 x 21 grid
++of (target fraction, release gain) rule curves is scored through
++``score_matrix`` for three inflow scenarios. The study reports the best
++rule per scenario and the rule with the smallest worst-case regret, then
++replays that rule with full records to read shortage days, the longest
++shortage streak and spill.
++
++Run: python examples/python/reservoir_policy_study.py
++"""
++
++import time
++
++import synthetic as s
++from hydro_craft import Prepared
++
++scenarios = {name: Prepared(s.reservoir(name)) for name in ("dry", "normal", "wet")}
++grid = [[t / 20, g / 20] for t in range(21) for g in range(21)]
++
++start = time.perf_counter()
++costs = {}
++for name, prepared in scenarios.items():
++    scores, statuses, steps = prepared.score_matrix(grid, workers=2)
++    assert set(statuses) == {"complete"} and set(steps) == {365 * 3}
++    costs[name] = scores
++elapsed = time.perf_counter() - start
++print(f"scored {len(grid)} policies x {len(scenarios)} scenarios in {elapsed * 1e3:.1f} ms\n")
++
++print(f"{'scenario':<8} {'best target':>11} {'best gain':>10} {'cost':>12}")
++best = {}
++for name, scores in costs.items():
++    i = min(range(len(grid)), key=scores.__getitem__)
++    best[name] = scores[i]
++    print(f"{name:<8} {grid[i][0]:11.2f} {grid[i][1]:10.2f} {scores[i]:12.0f}")
++
++# Worst-case regret: the largest excess over each scenario's best rule.
++regret = [max(costs[n][i] - best[n] for n in costs) for i in range(len(grid))]
++robust = min(range(len(grid)), key=regret.__getitem__)
++print(f"\nminimax-regret rule: target {grid[robust][0]:.2f}, gain {grid[robust][1]:.2f}, "
++      f"worst regret {regret[robust]:.0f} (cost units: m3 shortage + 0.05 m3 spill)\n")
++
++print(f"{'scenario':<8} {'cost':>12} {'shortage m3':>12} {'short days':>11} "
++      f"{'longest':>8} {'spill m3':>12} {'balance':>8}")
++for name, prepared in scenarios.items():
++    row = prepared.evaluate(grid[robust])
++    m = row["metrics"]
++    print(f"{name:<8} {row['score']:12.0f} {m['shortage_m3']:12.0f} {m['shortage_days']:11d} "
++          f"{m['longest_shortage_days']:8d} {m['spill_m3']:12.0f} {m['max_balance_m3']:8.1e}")
++print("\nDecisions use the previous day's storage only, so the rule is non-anticipatory.")
+diff --git a/examples/python/run_examples.py b/examples/python/run_examples.py
+new file mode 100644
+index 0000000..dc492fd
+--- /dev/null
++++ b/examples/python/run_examples.py
+@@ -0,0 +1,40 @@
++"""Run every Python example and save its output under outputs/.
++
++Run from anywhere with the installed package:
++python examples/python/run_examples.py
++"""
++
++import json
++from pathlib import Path
++import subprocess
++import sys
++import time
++
++HERE = Path(__file__).resolve().parent
++EXAMPLES = [
++    "catchment_sensitivity",
++    "warming_scenarios",
++    "reservoir_policy_study",
++    "scipy_calibration",
++    "fcmaes_cmaes_population",
++    "fcmaes_robust_policy",
++]
++
++
++def main():
++    (HERE / "outputs").mkdir(exist_ok=True)
++    summary = {}
++    for name in EXAMPLES:
++        start = time.perf_counter()
++        result = subprocess.run([sys.executable, str(HERE / f"{name}.py")], cwd=HERE,
++                                capture_output=True, text=True, timeout=300, check=False)
++        seconds = time.perf_counter() - start
++        (HERE / "outputs" / f"{name}.txt").write_text(result.stdout + result.stderr)
++        if result.returncode != 0:
++            raise SystemExit(f"{name} failed:\n{result.stderr}")
++        summary[name] = round(seconds, 3)
++    print(json.dumps({"status": "passed", "wall_seconds": summary}, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/examples/python/scipy_calibration.py b/examples/python/scipy_calibration.py
+new file mode 100644
+index 0000000..f15e32e
+--- /dev/null
++++ b/examples/python/scipy_calibration.py
+@@ -0,0 +1,65 @@
++"""Calibrate the catchment with SciPy differential evolution.
++
++Optimization with SciPy: ``differential_evolution(vectorized=True)``
++hands the objective a whole generation at once, which goes to
++``score_matrix`` in one native call. The search box for ``lp`` is
++deliberately wider than the model allows (up to 1.2 instead of 1.0), so
++some candidates come back ``invalid``. They get a graded penalty: a
++large constant plus the distance outside the model limits, which keeps
++the penalty landscape pointing back to the valid region.
++
++The winner is replayed with a full record to compare train, validation
++and test folds with the generating parameters.
++
++Run: python examples/python/scipy_calibration.py
++"""
++
++from collections import Counter
++import time
++
++import numpy as np
++from scipy.optimize import differential_evolution
++
++import synthetic as s
++from hydro_craft import Prepared
++
++prepared = Prepared(s.calibration_case())
++bounds = list(s.BOUNDS)
++bounds[2] = (0.3, 1.2)  # lp above 1.0 is outside the model limits
++statuses_seen = Counter()
++evaluations = 0
++
++
++def objective(population):
++    """Vectorized objective: population has shape (dimension, size)."""
++    global evaluations
++    rows = population.T
++    scores, statuses, _ = prepared.score_matrix(rows)
++    statuses_seen.update(statuses)
++    evaluations += len(rows)
++    values = np.array(scores)
++    for i, status in enumerate(statuses):
++        if status != "complete":
++            values[i] = 1e3 * (1.0 + s.violation(rows[i]))
++    return values
++
++
++start = time.perf_counter()
++result = differential_evolution(objective, bounds, vectorized=True, updating="deferred",
++                                popsize=12, maxiter=120, tol=1e-8, seed=7, polish=False)
++elapsed = time.perf_counter() - start
++print(f"evaluations {evaluations} in {elapsed:.2f} s; statuses {dict(statuses_seen)}")
++print(f"best train RMSE {result.fun:.5f} mm/day\n")
++
++final = prepared.evaluate(result.x.tolist())
++truth = prepared.evaluate(s.TRUTH)
++print(f"{'parameter':<12} {'found':>9} {'truth':>9}  unit")
++for name, unit, found, true in zip(s.NAMES, s.UNITS, result.x, s.TRUTH, strict=True):
++    print(f"{name:<12} {found:9.4f} {true:9.4f}  {unit}")
++print(f"\n{'fold':<11} {'RMSE found':>11} {'RMSE truth':>11} {'bias found':>11} {'bias truth':>11}")
++for fold in ("train", "validation", "test"):
++    a, b = final["metrics"][fold], truth["metrics"][fold]
++    print(f"{fold:<11} {a['rmse_mm']:11.4f} {b['rmse_mm']:11.4f} "
++          f"{a['volume_bias_mm']:11.2f} {b['volume_bias_mm']:11.2f}")
++print("\nSelect on train, check validation, report test once. The noise in the")
++print("synthetic observations limits how closely any parameter set can fit.")
+diff --git a/examples/python/synthetic.py b/examples/python/synthetic.py
+new file mode 100644
+index 0000000..1053508
+--- /dev/null
++++ b/examples/python/synthetic.py
+@@ -0,0 +1,85 @@
++"""Seeded synthetic inputs shared by the examples.
++
++Everything here is synthetic: a snowy mid-latitude catchment with a
++seasonal temperature cycle, and an irrigation reservoir with seasonal
++inflow and demand. No observed data are imported.
++"""
++
++import math
++import random
++
++from hydro_craft import Prepared
++
++# Order of the catchment parameter vector.
++NAMES = ["capacity", "exponent", "lp", "kfast", "kbase", "percolation", "degree"]
++UNITS = ["mm", "-", "-", "1/day", "1/day", "mm/day", "mm/(degC day)"]
++# Model limits enforced by hydro-craft (anything outside is "invalid").
++LIMITS = [(1.0, 2000.0), (0.1, 10.0), (0.05, 1.0), (0.0, 1.0), (0.0, 1.0),
++          (0.0, 100.0), (0.0, 30.0)]
++# A physically plausible search box inside the limits.
++BOUNDS = [(50.0, 400.0), (0.5, 5.0), (0.3, 1.0), (0.05, 0.6), (0.005, 0.2),
++          (0.5, 6.0), (1.0, 6.0)]
++# Parameters used to generate the synthetic "observed" runoff.
++TRUTH = [180.0, 2.2, 0.7, 0.25, 0.03, 2.5, 3.5]
++
++
++def forcing(years=4, seed=11, warming=0.0, wetting=1.0):
++    """Daily precipitation, PET and temperature with cold winters."""
++    rng = random.Random(seed)
++    days = []
++    for i in range(365 * years):
++        phase = 2 * math.pi * (i % 365) / 365
++        temperature = 4.0 - 9.0 * math.cos(phase) + rng.gauss(0.0, 2.5) + warming
++        wet = rng.random() < 0.45
++        precipitation = min(rng.expovariate(1 / 6.5) * wetting, 150.0) if wet else 0.0
++        pet = max(0.0, 1.8 - 1.6 * math.cos(phase) + rng.gauss(0.0, 0.2))
++        days.append({"day": i, "precipitation_mm": precipitation, "pet_mm": pet,
++                     "temperature_c": temperature, "observed_mm": None})
++    return days
++
++
++def catchment(days, area_km2=120.0):
++    """One warm-up year, two training years, then validation and test halves."""
++    n = len(days)
++    return {"kind": "catchment", "area_km2": area_km2, "forcing": days,
++            "warmup": 365, "train_end": n - 365, "validation_end": n - 182}
++
++
++def observe(model, parameters=TRUTH, noise=0.08, gap_every=17, seed=5):
++    """Fill observed_mm from a traced run with multiplicative noise and gaps."""
++    rng = random.Random(seed)
++    # A traced run needs observations in every fold; seed them with zeros.
++    seeded = model | {"forcing": [d | {"observed_mm": 0.0} for d in model["forcing"]]}
++    row = Prepared(seeded).evaluate(parameters, trace=True)
++    assert row["status"] == "complete", row
++    days = []
++    for i, (day, step) in enumerate(zip(model["forcing"], row["metrics"]["trace"], strict=True)):
++        value = None if i % gap_every == 0 else step["runoff_mm"] * (1 + rng.gauss(0.0, noise))
++        days.append(day | {"observed_mm": None if value is None else max(value, 0.0)})
++    return model | {"forcing": days}
++
++
++def calibration_case(years=4, seed=11):
++    """A catchment model with noisy synthetic observations."""
++    return observe(catchment(forcing(years, seed)))
++
++
++def reservoir(scenario="normal", years=3, seed=3):
++    """An irrigation reservoir; scenario scales inflow (dry, normal, wet)."""
++    scale = {"dry": 0.65, "normal": 1.0, "wet": 1.4}[scenario]
++    rng = random.Random(seed)
++    inputs = []
++    for i in range(365 * years):
++        phase = 2 * math.pi * (i % 365) / 365
++        # Spring snowmelt inflow peak and a summer irrigation demand peak.
++        inflow = scale * max(0.0, 58_000 + 45_000 * math.sin(phase - 1.0) + rng.gauss(0, 12_000))
++        demand = 42_000 + 22_000 * max(0.0, -math.cos(phase))
++        evaporation = 1_500 + 1_200 * max(0.0, -math.cos(phase))
++        inputs.append({"inflow_m3": inflow, "evaporation_m3": evaporation, "demand_m3": demand})
++    return {"kind": "reservoir", "capacity_m3": 4.0e6, "initial_m3": 2.0e6,
++            "outlet_m3_per_day": 70_000, "reserve_m3": 0.6e6, "inputs": inputs}
++
++
++def violation(x, limits=LIMITS):
++    """Total distance of a parameter vector outside the model limits."""
++    return sum(max(lo - v, 0.0, v - hi) for v, (lo, hi) in zip(x, limits, strict=True))
+diff --git a/examples/python/warming_scenarios.py b/examples/python/warming_scenarios.py
+new file mode 100644
+index 0000000..a6d54a9
+--- /dev/null
++++ b/examples/python/warming_scenarios.py
+@@ -0,0 +1,41 @@
++"""How would a warmer climate shift snow storage and runoff timing?
++
++Application: scenario comparison with traced runs. The calibrated
++parameters stay fixed while the daily temperature series is shifted by
++0, +1, +2 and +4 degC. Each scenario is its own prepared model (its own
++provenance hash); one traced record per scenario gives daily stores and
++runoff for the last simulated year.
++
++Run: python examples/python/warming_scenarios.py
++"""
++
++import statistics
++
++import synthetic as s
++from hydro_craft import Prepared
++
++base = s.calibration_case()
++print(f"{'warming':>8} {'peak SWE':>9} {'peak day':>9} {'snow days':>10} "
++      f"{'spring %':>9} {'runoff':>8} {'ET':>8} {'max Q':>8}  model sha256")
++print(f"{'degC':>8} {'mm':>9} {'of year':>9} {'>1 mm':>10} {'Mar-Jun':>9} "
++      f"{'mm/yr':>8} {'mm/yr':>8} {'m3/s':>8}")
++for warming in (0.0, 1.0, 2.0, 4.0):
++    days = [d | {"temperature_c": d["temperature_c"] + warming} for d in base["forcing"]]
++    model = base | {"forcing": days}
++    prepared = Prepared(model)
++    batch = prepared.batch([{"id": f"+{warming}", "parameters": s.TRUTH, "trace": True}])
++    row = batch["records"][0]
++    assert row["status"] == "complete", row
++    last_year = row["metrics"]["trace"][-365:]
++    snow = [d["stores_mm"][0] for d in last_year]
++    runoff = [d["runoff_mm"] for d in last_year]
++    peak_day = max(range(365), key=snow.__getitem__)
++    spring = sum(runoff[59:181]) / sum(runoff)
++    print(f"{warming:>+8.1f} {max(snow):9.1f} {peak_day:9d} {sum(v > 1 for v in snow):10d} "
++          f"{100 * spring:9.1f} {sum(runoff):8.1f} {sum(d['et_mm'] for d in last_year):8.1f} "
++          f"{max(d['discharge_m3_s'] for d in last_year):8.2f}  {batch['model_sha256'][:12]}")
++    assert row["metrics"]["max_daily_balance_mm"] < 1e-9
++
++print("\nThe daily water balance closes to rounding in every scenario.")
++print(f"Mean last-year temperature without warming: "
++      f"{statistics.mean(d['temperature_c'] for d in base['forcing'][-365:]):.2f} degC")
+-- 
+2.43.0
+

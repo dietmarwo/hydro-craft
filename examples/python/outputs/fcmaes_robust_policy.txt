@@ -1,0 +1,7 @@
+bitecpp: target 0.8954, gain 1.0000, mean cost 4883335, 600 evaluations in 0.03 s, scenario statuses {'invalid': 132, 'complete': 1404}
+cmaescpp: target 0.8954, gain 0.9961, mean cost 4883347, 608 evaluations in 0.03 s, scenario statuses {'invalid': 104, 'complete': 1512}
+
+scenario        cost  shortage days     spill m3
+dry         13223642            511            0
+normal        221606              1      4430973
+wet          1204792              0     24095840

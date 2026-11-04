@@ -1,0 +1,2 @@
+1682 rows, 1 invalid; best row 1458: target 0.875, gain 0.575, cost 161777.7, steps 730
+metrics: {"longest_shortage_days":0,"max_balance_m3":4.656612873077393e-10,"shortage_days":0,"shortage_m3":0.0,"spill_m3":3235554.550068734,"trace":null}

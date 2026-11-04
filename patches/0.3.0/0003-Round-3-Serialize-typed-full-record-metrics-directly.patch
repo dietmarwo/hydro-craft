@@ -1,0 +1,371 @@
+From e9a908b2a02b6a22dc383f223b7aa792913b875f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:39:33 -0400
+Subject: [PATCH 03/18] Round 3: Serialize typed full-record metrics directly
+
+The domain now returns typed catchment and reservoir metrics structs
+instead of nested serde_json::Value maps built with string keys for
+every record. Fields are declared in sorted key order, so full-record
+JSON text is unchanged and the CLI's Value view is identical; a unit
+test checks both. The unused Failure metrics hook is removed. The
+benchmark accepts CRAFT_WORKERS to override a workload's worker count
+for scaling studies; workload definitions are unchanged when unset.
+
+Workload: serial (96 full records, one worker), 11 samples against
+round 2.
+Before median: 0.595 ms. After median: 0.359 ms. Speedup: 1.66x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            | 11 +++
+ .../performance-0.3.0/round03-serial.json     | 36 +++++++++
+ examples/performance.rs                       |  4 +
+ src/domain.rs                                 | 75 ++++++++++++++++---
+ src/lib.rs                                    | 71 ++++++++++++------
+ 5 files changed, 163 insertions(+), 34 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round03-serial.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 3c503ca..63dbdf5 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -60,3 +60,14 @@ and the catchment about 3x faster per day.
+   host), round 1 before, round 2 after.
+ - Expected: thread creation and join cost 100-430 us per batch here,
+   against roughly 0.4 ms of serial work, so at least 2x.
++
++## Round 3: typed full-record metrics
++
++- Change: the domain returns typed catchment and reservoir metrics
++  structs that serialize directly, instead of building nested
++  `serde_json::Value` maps with string keys for every record. Fields are
++  declared in sorted key order so the JSON text is unchanged; the CLI
++  still converts the typed batch to a `Value`.
++- Workload: `serial` (96 full records, one worker), round 2 before.
++- Expected: the profile attributes about 180 us of evaluation and 90 us
++  of encoding to full metrics, so about 1.5x.
+diff --git a/evidence/performance-0.3.0/round03-serial.json b/evidence/performance-0.3.0/round03-serial.json
+new file mode 100644
+index 0000000..33566d7
+--- /dev/null
++++ b/evidence/performance-0.3.0/round03-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.00057632025,
++    0.0005567205,
++    0.00062921875,
++    0.00062007175,
++    0.00059532425,
++    0.0005688965,
++    0.00058951325,
++    0.00058695725,
++    0.0006112395,
++    0.0006223915,
++    0.00060474975
++  ],
++  "after_seconds": [
++    0.00034667,
++    0.00035541875,
++    0.00036982675,
++    0.000364208,
++    0.00036568425,
++    0.00035260975,
++    0.00035883925,
++    0.0003417685,
++    0.0003558465,
++    0.000361872,
++    0.00037364175
++  ],
++  "medians_seconds": [
++    0.00059532425,
++    0.00035883925
++  ],
++  "speedup": 1.6590276844018597
++}
+diff --git a/examples/performance.rs b/examples/performance.rs
+index 0e92aa1..9036415 100644
+--- a/examples/performance.rs
++++ b/examples/performance.rs
+@@ -57,6 +57,10 @@ fn main() {
+         .map(|v| v.as_f64().unwrap())
+         .collect();
+     let candidates = serde_json::to_string(&candidates).unwrap();
++    // CRAFT_WORKERS overrides the workload's worker count for scaling studies.
++    let workers = std::env::var("CRAFT_WORKERS").ok().map_or(workers, |w| {
++        w.parse().expect("CRAFT_WORKERS must be an integer")
++    });
+     let budget = json!({"workers":workers}).to_string();
+     let evaluator = Prepared::new(&model.to_string()).unwrap();
+     let lean = std::env::var_os("CRAFT_SCORES").is_some();
+diff --git a/src/domain.rs b/src/domain.rs
+index e0cec2b..37fba47 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -1,6 +1,6 @@
+ use crate::{Evaluation, Work, invalid};
+-use serde::Deserialize;
+-use serde_json::json;
++use serde::{Deserialize, Serialize};
++use serde_json::{Value, json};
+ 
+ pub const CAPABILITIES: &[&str] = &[
+     "synthetic_daily_hbv_style",
+@@ -138,11 +138,52 @@ impl Score {
+     fn rmse(&self) -> f64 {
+         (self.squares / self.n as f64).sqrt()
+     }
+-    fn result(&self) -> serde_json::Value {
+-        json!({"rmse_mm":self.rmse(),"volume_bias_mm":self.bias,"observations":self.n})
++    fn result(&self) -> FoldMetrics {
++        FoldMetrics {
++            observations: self.n,
++            rmse_mm: self.rmse(),
++            volume_bias_mm: self.bias,
++        }
+     }
+ }
+ 
++/// Fit of one scored fold. Fields are declared in key order, matching the
++/// sorted maps of earlier releases.
++#[derive(Debug, Serialize)]
++pub struct FoldMetrics {
++    observations: u64,
++    rmse_mm: f64,
++    volume_bias_mm: f64,
++}
++
++#[derive(Debug, Serialize)]
++pub struct CatchmentMetrics {
++    balance_mm: f64,
++    max_daily_balance_mm: f64,
++    test: FoldMetrics,
++    trace: Option<Vec<Value>>,
++    train: FoldMetrics,
++    validation: FoldMetrics,
++}
++
++#[derive(Debug, Serialize)]
++pub struct ReservoirMetrics {
++    longest_shortage_days: u64,
++    max_balance_m3: f64,
++    shortage_days: u64,
++    shortage_m3: f64,
++    spill_m3: f64,
++    trace: Option<Vec<Value>>,
++}
++
++/// Full-record metrics, serialized as the model's metrics object.
++#[derive(Debug, Serialize)]
++#[serde(untagged)]
++pub enum Metrics {
++    Catchment(CatchmentMetrics),
++    Reservoir(ReservoirMetrics),
++}
++
+ pub fn evaluate(
+     model: &Model,
+     parameters: &[f64],
+@@ -244,9 +285,14 @@ pub fn evaluate(
+             Ok((
+                 folds[0].rmse(),
+                 work.metrics(|| {
+-                    json!({"train":folds[0].result(),"validation":folds[1].result(),
+-                "test":folds[2].result(),"balance_mm":balance,"max_daily_balance_mm":max_balance,
+-                "trace":traced.then_some(trace)})
++                    Metrics::Catchment(CatchmentMetrics {
++                        balance_mm: balance,
++                        max_daily_balance_mm: max_balance,
++                        test: folds[2].result(),
++                        trace: traced.then_some(trace),
++                        train: folds[0].result(),
++                        validation: folds[1].result(),
++                    })
+                 }),
+             ))
+         }
+@@ -266,7 +312,7 @@ pub fn evaluate(
+             let mut store = *initial_m3;
+             let mut deficit = 0.0;
+             let mut spill_total = 0.0;
+-            let (mut streak, mut longest, mut short_days) = (0, 0, 0);
++            let (mut streak, mut longest, mut short_days) = (0_u64, 0_u64, 0_u64);
+             let mut max_balance = 0.0_f64;
+             let mut trace = Vec::new();
+             let threshold = target * capacity_m3;
+@@ -306,9 +352,16 @@ pub fn evaluate(
+             }
+             Ok((
+                 deficit + 0.05 * spill_total,
+-                work.metrics(|| json!({"shortage_m3":deficit,"spill_m3":spill_total,
+-                "shortage_days":short_days,"longest_shortage_days":longest,"max_balance_m3":max_balance,
+-                "trace":traced.then_some(trace)})),
++                work.metrics(|| {
++                    Metrics::Reservoir(ReservoirMetrics {
++                        longest_shortage_days: longest,
++                        max_balance_m3: max_balance,
++                        shortage_days: short_days,
++                        shortage_m3: deficit,
++                        spill_m3: spill_total,
++                        trace: traced.then_some(trace),
++                    })
++                }),
+             ))
+         }
+     }
+diff --git a/src/lib.rs b/src/lib.rs
+index b9265f2..64469eb 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,33 +14,24 @@ use std::{
+     time::{Duration, Instant},
+ };
+ 
+-pub type Evaluation = Result<(f64, Value), Failure>;
++/// A domain result: the objective and, when metrics are enabled, typed metrics.
++pub(crate) type Evaluation = Result<(f64, Option<domain::Metrics>), Failure>;
+ 
+ #[derive(Debug, Clone)]
+ pub struct Failure {
+     status: &'static str,
+     detail: String,
+-    metrics: Option<Value>,
+ }
+ pub fn invalid(detail: impl Into<String>) -> Failure {
+     Failure {
+         status: "invalid",
+         detail: detail.into(),
+-        metrics: None,
+     }
+ }
+ pub fn infeasible(detail: impl Into<String>) -> Failure {
+     Failure {
+         status: "infeasible",
+         detail: detail.into(),
+-        metrics: None,
+-    }
+-}
+-
+-impl Failure {
+-    pub fn with_metrics(mut self, metrics: Value) -> Self {
+-        self.metrics = Some(metrics);
+-        self
+     }
+ }
+ 
+@@ -80,12 +71,9 @@ pub struct Work<'a> {
+     metrics_enabled: bool,
+ }
+ impl Work<'_> {
+-    pub fn metrics(&self, make: impl FnOnce() -> Value) -> Value {
+-        if self.metrics_enabled {
+-            make()
+-        } else {
+-            Value::Null
+-        }
++    /// Build metrics only for full records.
++    pub fn metrics<M>(&self, make: impl FnOnce() -> M) -> Option<M> {
++        self.metrics_enabled.then(make)
+     }
+ 
+     #[inline]
+@@ -103,21 +91,18 @@ impl Work<'_> {
+             return Err(Failure {
+                 status: "cancelled",
+                 detail: "cancel file exists".into(),
+-                metrics: None,
+             });
+         }
+         if self.deadline.is_some_and(|d| Instant::now() >= d) {
+             return Err(Failure {
+                 status: "wall_limit",
+                 detail: "batch deadline reached".into(),
+-                metrics: None,
+             });
+         }
+         if self.used == self.budget.max_steps {
+             return Err(Failure {
+                 status: "work_limit",
+                 detail: "candidate step budget reached".into(),
+-                metrics: None,
+             });
+         }
+         self.used += 1;
+@@ -131,7 +116,7 @@ struct Record<'a> {
+     status: &'static str,
+     steps: u64,
+     score: Option<f64>,
+-    metrics: Option<Value>,
++    metrics: Option<domain::Metrics>,
+     detail: Option<String>,
+ }
+ 
+@@ -321,7 +306,7 @@ impl Prepared {
+                 status: "complete",
+                 steps,
+                 score: Some(score),
+-                metrics: Some(metrics),
++                metrics,
+                 detail: None,
+             },
+             (Err(e), steps) => Record {
+@@ -329,7 +314,7 @@ impl Prepared {
+                 status: e.status,
+                 steps,
+                 score: None,
+-                metrics: if metrics_enabled { e.metrics } else { None },
++                metrics: None,
+                 detail: Some(e.detail),
+             },
+         }
+@@ -649,4 +634,44 @@ mod tests {
+             );
+         }
+     }
++
++    /// Full records serialize metrics with sorted keys, exactly as the
++    /// `serde_json::Value` maps of 0.2.0 did, and the CLI view agrees.
++    #[test]
++    fn typed_metrics_keep_sorted_json_and_cli_values() {
++        let example = fixture();
++        for (model, parameters) in [
++            (example["model"].clone(), example["parameters"].clone()),
++            (reservoir(), json!([0.4, 0.3])),
++        ] {
++            let prepared = Prepared::new(&model.to_string()).unwrap();
++            let candidates = json!([
++                {"id":"plain","parameters":parameters},
++                {"id":"traced","parameters":parameters,"trace":true},
++            ]);
++            let text = prepared
++                .evaluate_json(&candidates.to_string(), "{}")
++                .unwrap();
++            #[derive(Deserialize)]
++            struct Row<'a> {
++                #[serde(borrow)]
++                metrics: &'a RawValue,
++            }
++            #[derive(Deserialize)]
++            struct Rows<'a> {
++                #[serde(borrow)]
++                records: Vec<Row<'a>>,
++            }
++            let rows: Rows = serde_json::from_str(&text).unwrap();
++            for row in rows.records {
++                let sorted: Value = serde_json::from_str(row.metrics.get()).unwrap();
++                assert!(sorted.is_object());
++                assert_eq!(row.metrics.get(), sorted.to_string());
++            }
++            let request = json!({"schema":"hydro-craft.request/0.1","model":model,
++                                 "candidates":candidates});
++            let cli = run(&request.to_string()).unwrap();
++            assert_eq!(cli, serde_json::from_str::<Value>(&text).unwrap());
++        }
++    }
+ }
+-- 
+2.43.0
+

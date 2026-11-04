@@ -1,0 +1,67 @@
+From 00472e1aaa3a679b1a77d0e297efb56c82464b96 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:50:44 -0400
+Subject: [PATCH 17/18] Label every architecture performance table with its
+ host
+
+Add the measurement host (2 vCPUs, Intel Xeon @ 2.10GHz, Rust 1.97.0,
+CPython 3.12.3) directly above each of the five performance tables, in
+addition to the section introduction.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/architecture.md | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/docs/architecture.md b/docs/architecture.md
+index d396a84..5b2f586 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -189,6 +189,8 @@ keeps its four requested workers on this 2-vCPU host. Matrix rows compare
+ 0.2.0 lean scores with 0.3.0 matrix calls, because 0.2.0 has no matrix
+ API. Outputs of both binaries are byte-identical for every workload.
+ 
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
+ | Workload | Case | 0.2.0 ms | 0.3.0 ms | 0.2.0 / 0.3.0 |
+ | --- | --- | ---: | ---: | ---: |
+ | `one` | Single full record (90 days) | 0.005 | 0.003 | 1.55x |
+@@ -212,6 +214,8 @@ Decode covers candidates and budget; evaluate covers validation,
+ dispatch, the domain kernels and record assembly; encode is the result
+ JSON. Matrix rows are whole `score_matrix` calls.
+ 
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
+ | Workload | API | Candidates | Decode us | Evaluate us | Encode us | Total us | Per candidate us |
+ | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+ | `one` | full | 1 | 0.3 | 2.1 | 0.7 | 3.1 | 3.09 |
+@@ -247,6 +251,8 @@ Median microseconds per call through the installed wheels on CPU 0
+ and [`-v020.json`](../evidence/performance-0.3.0/python-call-costs-v020.json)).
+ The 90-day packaged example, one worker.
+ 
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
+ | Call | 0.2.0 us | 0.3.0 us |
+ | --- | ---: | ---: |
+ | `evaluate(x)` (one full record) | 19.27 | 16.15 |
+@@ -268,6 +274,8 @@ Median milliseconds of 7 alternating samples with `CRAFT_WORKERS`
+ overriding each workload's worker count
+ ([`worker-scaling.json`](../evidence/performance-0.3.0/worker-scaling.json)).
+ 
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
+ | Workload | API | 1 worker ms | 2 workers | 3 workers | 4 workers |
+ | --- | --- | ---: | ---: | ---: | ---: |
+ | `parallel` | full | 0.150 | 0.178 (0.84x) | 0.174 (0.86x) | 0.183 (0.82x) |
+@@ -294,6 +302,8 @@ the 0.2.0 delivery, 0.3.0 built from its sdist). Columns are medians; the
+ total median is computed per run
+ ([`optimization/runs.json`](../evidence/performance-0.3.0/optimization/runs.json)).
+ 
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
+ | Configuration | Prepare ms | Search ms | Replay ms | Total ms | Search range ms | v0.2.0-full / total |
+ | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+ | v0.2.0-full | 0.386 | 11.683 | 0.527 | 12.578 | 10.87-12.13 | 1.00x |
+-- 
+2.43.0
+

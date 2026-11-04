@@ -1,0 +1,9 @@
+ warming  peak SWE  peak day  snow days  spring %   runoff       ET    max Q  model sha256
+    degC        mm   of year      >1 mm   Mar-Jun    mm/yr    mm/yr     m3/s
+    +0.0     228.6        59        154      73.6    397.9    535.8    17.98  21e010b22d70
+    +1.0     173.7        53        132      67.1    402.8    539.6    12.29  187f3ae05b72
+    +2.0     120.6        31        105      54.1    403.8    537.1    13.30  4ad02cda0a56
+    +4.0      39.4        31         42      42.1    399.1    536.2     8.19  ca9233f6c81d
+
+The daily water balance closes to rounding in every scenario.
+Mean last-year temperature without warming: 3.91 degC

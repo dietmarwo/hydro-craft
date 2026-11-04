@@ -1,0 +1,12 @@
+{
+  "module": "hydro_craft",
+  "seconds_per_call": {
+    "evaluate_one": 1.6147010001077433e-05,
+    "batch_one": 1.5508800001953203e-05,
+    "scores_one": 1.0294179996890307e-05,
+    "batch_96": 0.0007276783150018673,
+    "scores_96": 0.000286436930000491,
+    "score_matrix_one": 4.450850001376239e-06,
+    "score_matrix_96": 5.288081000344391e-05
+  }
+}

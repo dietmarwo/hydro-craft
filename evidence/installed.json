@@ -1,0 +1,23 @@
+{
+  "installed": true,
+  "ordered_replay": true,
+  "resumed_results": 12,
+  "retained_attempts": 21,
+  "introductory_score": 4.965068306494546e-16,
+  "batch_candidates": 96,
+  "cold_prepare_and_run_seconds": [
+    0.0018378889999439707,
+    0.0015257149998433306,
+    0.0014755600004718872
+  ],
+  "prepared_worker_1_seconds": [
+    0.0012005660000795615,
+    0.0010995659995387541,
+    0.0011358929996276856
+  ],
+  "prepared_worker_4_seconds": [
+    0.0013258560002213926,
+    0.0009687239999038866,
+    0.0011201699999219272
+  ]
+}

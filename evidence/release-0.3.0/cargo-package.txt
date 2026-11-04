@@ -1,0 +1,22 @@
+$ cargo package --locked
+warning: manifest has no documentation, homepage or repository
+  |
+  = note: see https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info
+   Packaging hydro-craft v0.3.0 (/home/claude/craft5/hydro-craft)
+    Updating crates.io index
+    Packaged 103 files, 453.5KiB (115.5KiB compressed)
+   Verifying hydro-craft v0.3.0 (/home/claude/craft5/hydro-craft)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.75s
+cargo package exit 0
+
+$ cargo package --list --locked | wc -l
+103
+f570b6a1363c21b199a119bc492b2181d2012844b76133959ff9a5bc3be6db42  hydro-craft-0.3.0.crate
+
+.cargo_vcs_info.json:
+{
+  "git": {
+    "sha1": "00472e1aaa3a679b1a77d0e297efb56c82464b96"
+  },
+  "path_in_vcs": ""
+}

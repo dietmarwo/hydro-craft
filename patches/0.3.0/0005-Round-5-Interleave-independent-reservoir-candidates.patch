@@ -1,0 +1,699 @@
+From 79ab1b66c2e9393d4bce15f9993c5857f4ddef9f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:43:34 -0400
+Subject: [PATCH 05/18] Round 5: Interleave independent reservoir candidates
+
+When no deadline or cancel file is monitored and max_steps covers every
+simulated day, the engine passes groups of up to eight untraced
+reservoir candidates to a lane kernel that advances them together over
+the shared daily inputs, in widths 8, 4 and 1. Scalar and lane paths
+share one reservoir_day step, so each candidate performs the same
+floating-point operations in the same order and results are
+bit-identical; shortage streaks are counted branch-free. Valid
+candidates are still charged one logical step per day and invalid ones
+none. Workers claim whole groups. New tests compare grouped and guarded
+single-candidate runs for full, lean, traced, invalid, partial-group
+and multi-worker batches.
+
+Workload: domain2 (48 full reservoir records of 2,400 days), 11
+samples against round 4.
+Before median: 2.479 ms. After median: 0.802 ms. Speedup: 3.09x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            |  16 +
+ .../performance-0.3.0/round05-domain2.json    |  36 +++
+ src/domain.rs                                 | 292 ++++++++++++++----
+ src/lib.rs                                    | 212 ++++++++++---
+ 4 files changed, 455 insertions(+), 101 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round05-domain2.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 608dedc..78a778e 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -80,3 +80,19 @@ and the catchment about 3x faster per day.
+ - Workload: `trace` (12 traced full records of 90 days), round 3 before.
+ - Expected: the profile spent about 1.4 ms building and 0.4 ms encoding
+   the per-day maps, so at least 2x.
++
++## Round 5: interleaved reservoir candidates
++
++- Change: when no deadline or cancel file is monitored and `max_steps`
++  covers every simulated day, the engine hands groups of up to eight
++  untraced reservoir candidates to a lane kernel that advances them
++  together over the shared daily inputs (widths 8, 4 and 1). Scalar
++  and lane evaluation share one `reservoir_day` function, so each
++  candidate performs the same floating-point operations in the same
++  order; results are bit-identical. Valid candidates are charged one
++  logical step per day, as before; invalid ones are rejected before
++  their first step. Workers claim whole groups.
++- Workload: `domain2` (48 full reservoir records of 2,400 days), round 4
++  before.
++- Expected: the micro-benchmark ran eight interleaved reservoir lanes
++  about 6x faster per day than one, so at least 3x on this workload.
+diff --git a/evidence/performance-0.3.0/round05-domain2.json b/evidence/performance-0.3.0/round05-domain2.json
+new file mode 100644
+index 0000000..4776035
+--- /dev/null
++++ b/evidence/performance-0.3.0/round05-domain2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain2",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0023815772,
++    0.0024930058000000002,
++    0.0025225354,
++    0.0024986656,
++    0.0025043220000000002,
++    0.002438441,
++    0.0024382994000000002,
++    0.0024789126,
++    0.0024927736,
++    0.0024661826,
++    0.0024623768
++  ],
++  "after_seconds": [
++    0.000801814,
++    0.0008002414,
++    0.000863859,
++    0.0008180224,
++    0.0008137512,
++    0.000801466,
++    0.0015784205999999999,
++    0.0008007012000000001,
++    0.0008052754000000001,
++    0.0007792804000000001,
++    0.0008018338
++  ],
++  "medians_seconds": [
++    0.0024789126,
++    0.0008018338
++  ],
++  "speedup": 3.0915541350339684
++}
+diff --git a/src/domain.rs b/src/domain.rs
+index f5a8e19..d627805 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -329,72 +329,252 @@ pub fn evaluate(
+             reserve_m3,
+             inputs,
+         } => {
+-            let &[target, gain] = parameters else {
+-                return Err(invalid("expected target fraction and release gain"));
++            let (target, gain) = reservoir_controls(parameters)?;
++            let site = Site {
++                capacity: *capacity_m3,
++                outlet: *outlet_m3_per_day,
++                reserve: *reserve_m3,
+             };
+-            if !bounded(target, 1.0) || !bounded(gain, 1.0) {
+-                return Err(invalid("reservoir controls must be in [0,1]"));
+-            }
+-            let mut store = *initial_m3;
+-            let mut deficit = 0.0;
+-            let mut spill_total = 0.0;
+-            let (mut streak, mut longest, mut short_days) = (0_u64, 0_u64, 0_u64);
+-            let mut max_balance = 0.0_f64;
+-            let mut trace = Vec::with_capacity(if traced { inputs.len() } else { 0 });
+             let threshold = target * capacity_m3;
+-            for d in inputs {
+-                work.step()?;
+-                let before = store;
+-                // Decide from prior storage. Today's realized inflow is only
+-                // used when executing withdrawals and closing the balance.
+-                let discretionary = gain * (before - threshold).max(0.0);
+-                store += d.inflow_m3;
+-                let evap = store.min(d.evaporation_m3);
+-                store -= evap;
+-                let available = (store - reserve_m3).max(0.0).min(*outlet_m3_per_day);
+-                let delivered = available.min(d.demand_m3);
+-                let release = (available - delivered).min(discretionary);
+-                let shortage = d.demand_m3 - delivered;
+-                store -= delivered + release;
+-                let spill = (store - capacity_m3).max(0.0);
+-                store -= spill;
+-                deficit += shortage;
+-                spill_total += spill;
+-                if work.metrics_enabled {
+-                    if shortage > 0.0 {
+-                        short_days += 1;
+-                        streak += 1;
+-                        longest = longest.max(streak);
+-                    } else {
+-                        streak = 0;
+-                    }
+-                    let balance = before + d.inflow_m3 - evap - delivered - release - spill - store;
+-                    max_balance = max_balance.max(balance.abs());
++            let mut state = ReservoirState::new(*initial_m3);
++            let mut trace = Vec::with_capacity(if traced { inputs.len() } else { 0 });
++            if work.metrics_enabled {
++                for d in inputs {
++                    work.step()?;
++                    let flows = reservoir_day::<true>(&mut state, threshold, gain, &site, d);
+                     if traced {
+                         trace.push(ReservoirDay {
+-                            delivered_m3: delivered,
+-                            evaporation_m3: evap,
+-                            release_m3: release,
+-                            shortage_m3: shortage,
+-                            spill_m3: spill,
+-                            storage_m3: store,
++                            delivered_m3: flows.delivered,
++                            evaporation_m3: flows.evaporation,
++                            release_m3: flows.release,
++                            shortage_m3: flows.shortage,
++                            spill_m3: flows.spill,
++                            storage_m3: state.store,
+                         });
+                     }
+                 }
++            } else {
++                for d in inputs {
++                    work.step()?;
++                    reservoir_day::<false>(&mut state, threshold, gain, &site, d);
++                }
+             }
+             Ok((
+-                deficit + 0.05 * spill_total,
+-                work.metrics(|| {
+-                    Metrics::Reservoir(ReservoirMetrics {
+-                        longest_shortage_days: longest,
+-                        max_balance_m3: max_balance,
+-                        shortage_days: short_days,
+-                        shortage_m3: deficit,
+-                        spill_m3: spill_total,
+-                        trace: traced.then_some(trace),
+-                    })
+-                }),
++                state.score(),
++                work.metrics(|| state.metrics(traced.then_some(trace))),
+             ))
+         }
+     }
+ }
++
++fn reservoir_controls(parameters: &[f64]) -> Result<(f64, f64), crate::Failure> {
++    let &[target, gain] = parameters else {
++        return Err(invalid("expected target fraction and release gain"));
++    };
++    if !bounded(target, 1.0) || !bounded(gain, 1.0) {
++        return Err(invalid("reservoir controls must be in [0,1]"));
++    }
++    Ok((target, gain))
++}
++
++/// Fixed reservoir limits shared by every candidate.
++struct Site {
++    capacity: f64,
++    outlet: f64,
++    reserve: f64,
++}
++
++/// Candidate-local reservoir state and running totals.
++#[derive(Clone, Copy)]
++struct ReservoirState {
++    store: f64,
++    deficit: f64,
++    spill_total: f64,
++    streak: u64,
++    longest: u64,
++    short_days: u64,
++    max_balance: f64,
++}
++
++impl ReservoirState {
++    fn new(initial: f64) -> Self {
++        Self {
++            store: initial,
++            deficit: 0.0,
++            spill_total: 0.0,
++            streak: 0,
++            longest: 0,
++            short_days: 0,
++            max_balance: 0.0,
++        }
++    }
++    fn score(&self) -> f64 {
++        self.deficit + 0.05 * self.spill_total
++    }
++    fn metrics(&self, trace: Option<Vec<ReservoirDay>>) -> Metrics {
++        Metrics::Reservoir(ReservoirMetrics {
++            longest_shortage_days: self.longest,
++            max_balance_m3: self.max_balance,
++            shortage_days: self.short_days,
++            shortage_m3: self.deficit,
++            spill_m3: self.spill_total,
++            trace,
++        })
++    }
++}
++
++struct Flows {
++    evaporation: f64,
++    delivered: f64,
++    release: f64,
++    shortage: f64,
++    spill: f64,
++}
++
++/// Advance one reservoir day. Scalar and interleaved evaluation share this
++/// function, so every candidate performs the same floating-point operations
++/// in the same order on either path.
++#[inline(always)]
++fn reservoir_day<const METRICS: bool>(
++    s: &mut ReservoirState,
++    threshold: f64,
++    gain: f64,
++    site: &Site,
++    d: &ReservoirInput,
++) -> Flows {
++    let before = s.store;
++    // Decide from prior storage. Today's realized inflow is only
++    // used when executing withdrawals and closing the balance.
++    let discretionary = gain * (before - threshold).max(0.0);
++    s.store += d.inflow_m3;
++    let evaporation = s.store.min(d.evaporation_m3);
++    s.store -= evaporation;
++    let available = (s.store - site.reserve).max(0.0).min(site.outlet);
++    let delivered = available.min(d.demand_m3);
++    let release = (available - delivered).min(discretionary);
++    let shortage = d.demand_m3 - delivered;
++    s.store -= delivered + release;
++    let spill = (s.store - site.capacity).max(0.0);
++    s.store -= spill;
++    s.deficit += shortage;
++    s.spill_total += spill;
++    if METRICS {
++        // Branch-free streak bookkeeping: a dry day resets the streak and
++        // leaves the longest streak unchanged.
++        let short = shortage > 0.0;
++        s.short_days += u64::from(short);
++        s.streak = if short { s.streak + 1 } else { 0 };
++        s.longest = s.longest.max(s.streak);
++        let balance = before + d.inflow_m3 - evaporation - delivered - release - spill - s.store;
++        s.max_balance = s.max_balance.max(balance.abs());
++    }
++    Flows {
++        evaporation,
++        delivered,
++        release,
++        shortage,
++        spill,
++    }
++}
++
++/// Steps a complete candidate takes: one per simulated day.
++pub fn steps(model: &Model) -> u64 {
++    match model {
++        Model::Catchment { forcing, .. } => forcing.len() as u64,
++        Model::Reservoir { inputs, .. } => inputs.len() as u64,
++    }
++}
++
++/// Number of candidates the interleaved kernel advances together, or 1 when
++/// the model has no interleaved kernel.
++pub fn group_width(model: &Model) -> usize {
++    match model {
++        Model::Catchment { .. } => 1,
++        Model::Reservoir { .. } => RESERVOIR_LANES,
++    }
++}
++
++const RESERVOIR_LANES: usize = 8;
++
++/// Evaluate untraced candidates together over the shared daily inputs.
++///
++/// The caller guarantees that the work budget cannot stop a candidate: no
++/// deadline or cancel file is monitored and `max_steps >= steps(model)`.
++/// Each candidate then either fails validation before its first step or
++/// simulates every day, so its logical step count is 0 or `steps(model)`.
++/// Results match `evaluate` bit for bit.
++pub fn evaluate_lanes(
++    model: &Model,
++    parameters: &[&[f64]],
++    metrics: bool,
++) -> Vec<(Evaluation, u64)> {
++    let days = steps(model);
++    match model {
++        Model::Catchment { .. } => unreachable!("catchment has no interleaved kernel"),
++        Model::Reservoir {
++            capacity_m3,
++            initial_m3,
++            outlet_m3_per_day,
++            reserve_m3,
++            inputs,
++        } => {
++            let site = Site {
++                capacity: *capacity_m3,
++                outlet: *outlet_m3_per_day,
++                reserve: *reserve_m3,
++            };
++            let mut results: Vec<(Evaluation, u64)> = Vec::with_capacity(parameters.len());
++            let mut valid = Vec::with_capacity(parameters.len());
++            for (i, p) in parameters.iter().enumerate() {
++                match reservoir_controls(p) {
++                    Ok((target, gain)) => {
++                        valid.push((i, target * capacity_m3, gain));
++                        results.push((Ok((0.0, None)), days));
++                    }
++                    Err(e) => results.push((Err(e), 0)),
++                }
++            }
++            let mut rest = valid.as_slice();
++            while !rest.is_empty() {
++                let width = match rest.len() {
++                    8.. => 8,
++                    4.. => 4,
++                    _ => 1,
++                };
++                let (chunk, tail) = rest.split_at(width);
++                let states = match (width, metrics) {
++                    (8, false) => reservoir_lanes::<8, false>(&site, *initial_m3, inputs, chunk),
++                    (8, true) => reservoir_lanes::<8, true>(&site, *initial_m3, inputs, chunk),
++                    (4, false) => reservoir_lanes::<4, false>(&site, *initial_m3, inputs, chunk),
++                    (4, true) => reservoir_lanes::<4, true>(&site, *initial_m3, inputs, chunk),
++                    (_, false) => reservoir_lanes::<1, false>(&site, *initial_m3, inputs, chunk),
++                    (_, true) => reservoir_lanes::<1, true>(&site, *initial_m3, inputs, chunk),
++                };
++                for (&(i, _, _), state) in chunk.iter().zip(states) {
++                    results[i].0 = Ok((state.score(), metrics.then(|| state.metrics(None))));
++                }
++                rest = tail;
++            }
++            results
++        }
++    }
++}
++
++/// Advance `L` independent reservoir candidates day by day. Their update
++/// chains do not depend on each other, so the processor overlaps them.
++fn reservoir_lanes<const L: usize, const METRICS: bool>(
++    site: &Site,
++    initial: f64,
++    inputs: &[ReservoirInput],
++    controls: &[(usize, f64, f64)],
++) -> Vec<ReservoirState> {
++    let threshold: [f64; L] = std::array::from_fn(|l| controls[l].1);
++    let gain: [f64; L] = std::array::from_fn(|l| controls[l].2);
++    let mut states = [ReservoirState::new(initial); L];
++    for d in inputs {
++        for l in 0..L {
++            reservoir_day::<METRICS>(&mut states[l], threshold[l], gain[l], site, d);
++        }
++    }
++    states.to_vec()
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index 64469eb..e84bdc5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,6 +6,7 @@ use serde_json::{Value, json, value::RawValue};
+ use sha2::{Digest, Sha256};
+ use std::{
+     collections::HashSet,
++    ops::Range,
+     path::PathBuf,
+     sync::{
+         OnceLock,
+@@ -151,30 +152,52 @@ fn check_budget(budget: &Budget) -> Result<(), String> {
+     Ok(())
+ }
+ 
+-/// Run `f` for every index in `0..count`, inline or on up to `workers`
+-/// concurrent evaluators from the persistent pool, and return the results in
+-/// index order.
+-fn dispatch<T: Send + Sync>(count: usize, workers: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+-    if workers == 1 || count == 1 {
+-        return (0..count).map(f).collect();
++/// Split `0..count` into consecutive groups of at most `group` indexes, run
++/// `f` on each group inline or on up to `workers` concurrent evaluators from
++/// the persistent pool, and return the results in index order.
++fn dispatch<T: Send + Sync>(
++    count: usize,
++    group: usize,
++    workers: usize,
++    f: impl Fn(Range<usize>) -> Vec<T> + Sync,
++) -> Vec<T> {
++    let groups = count.div_ceil(group);
++    let range = |g: usize| g * group..((g + 1) * group).min(count);
++    if workers == 1 || groups == 1 {
++        let mut out = Vec::with_capacity(count);
++        for g in 0..groups {
++            out.extend(f(range(g)));
++        }
++        return out;
+     }
+     let next = AtomicUsize::new(0);
+-    let slots: Vec<_> = (0..count).map(|_| OnceLock::new()).collect();
+-    pool::run(workers.min(count) - 1, &|| {
++    let slots: Vec<_> = (0..groups).map(|_| OnceLock::new()).collect();
++    pool::run(workers.min(groups) - 1, &|| {
+         loop {
+-            let index = next.fetch_add(1, Ordering::Relaxed);
+-            if index >= count {
++            let g = next.fetch_add(1, Ordering::Relaxed);
++            if g >= groups {
+                 break;
+             }
+-            assert!(slots[index].set(f(index)).is_ok(), "duplicate work index");
++            assert!(slots[g].set(f(range(g))).is_ok(), "duplicate work index");
+         }
+     });
+     slots
+         .into_iter()
+-        .map(|slot| slot.into_inner().expect("missing evaluation"))
++        .flat_map(|slot| slot.into_inner().expect("missing evaluation"))
+         .collect()
+ }
+ 
++/// Reject non-finite objectives, as for every evaluation path.
++fn finite(result: Evaluation) -> Evaluation {
++    result.and_then(|(score, metrics)| {
++        if score.is_finite() {
++            Ok((score, metrics))
++        } else {
++            Err(invalid("nonfinite objective"))
++        }
++    })
++}
++
+ pub struct Prepared {
+     model: domain::Model,
+     model_sha256: String,
+@@ -236,24 +259,80 @@ impl Prepared {
+         }
+         let budget: Budget = serde_json::from_str(budget).map_err(|e| e.to_string())?;
+         check_budget(&budget)?;
+-        let deadline = budget
+-            .wall_ms
+-            .map(|n| Instant::now() + Duration::from_millis(n));
+-        Ok(dispatch(rows, budget.workers, |row| {
+-            let values = &parameters[row * dimension..(row + 1) * dimension];
+-            match self.run(values, false, &budget, deadline, false) {
+-                (Ok((score, _)), steps) => MatrixScore {
++        Ok(self.evaluate_groups(
++            rows,
++            &budget,
++            false,
++            |row| (&parameters[row * dimension..(row + 1) * dimension], false),
++            |_, result, steps| match result {
++                Ok((score, _)) => MatrixScore {
+                     status: "complete",
+                     steps,
+                     score: Some(score),
+                 },
+-                (Err(e), steps) => MatrixScore {
++                Err(e) => MatrixScore {
+                     status: e.status,
+                     steps,
+                     score: None,
+                 },
++            },
++        ))
++    }
++
++    /// Evaluate `count` candidates given by `input(index) -> (parameters,
++    /// traced)` and map each classified result through `output`.
++    ///
++    /// When no deadline or cancel file is monitored and the step budget cannot
++    /// stop a complete candidate, untraced candidates go through the domain's
++    /// interleaved kernel in groups; otherwise each candidate runs alone with
++    /// a guarded work counter. Both paths produce identical results.
++    fn evaluate_groups<'p, T: Send + Sync>(
++        &self,
++        count: usize,
++        budget: &Budget,
++        metrics_enabled: bool,
++        input: impl Fn(usize) -> (&'p [f64], bool) + Sync,
++        output: impl Fn(usize, Evaluation, u64) -> T + Sync,
++    ) -> Vec<T> {
++        let deadline = budget
++            .wall_ms
++            .map(|n| Instant::now() + Duration::from_millis(n));
++        let unbounded = deadline.is_none()
++            && budget.cancel_file.is_none()
++            && budget.max_steps >= domain::steps(&self.model);
++        let group = if unbounded {
++            domain::group_width(&self.model)
++        } else {
++            1
++        };
++        dispatch(count, group, budget.workers, |range| {
++            if range.len() == 1 {
++                let (parameters, traced) = input(range.start);
++                let (result, steps) =
++                    self.run(parameters, traced, budget, deadline, metrics_enabled);
++                return vec![output(range.start, result, steps)];
+             }
+-        }))
++            let untraced: Vec<&[f64]> = range
++                .clone()
++                .map(&input)
++                .filter(|(_, traced)| !traced)
++                .map(|(parameters, _)| parameters)
++                .collect();
++            let mut lanes =
++                domain::evaluate_lanes(&self.model, &untraced, metrics_enabled).into_iter();
++            range
++                .map(|index| {
++                    let (parameters, traced) = input(index);
++                    let (result, steps) = if traced {
++                        self.run(parameters, traced, budget, deadline, metrics_enabled)
++                    } else {
++                        let (result, steps) = lanes.next().expect("one lane per candidate");
++                        (finite(result), steps)
++                    };
++                    output(index, result, steps)
++                })
++                .collect()
++        })
+     }
+ 
+     fn evaluate_encoded(
+@@ -282,26 +361,13 @@ impl Prepared {
+             metrics_enabled,
+             monitored: deadline.is_some() || budget.cancel_file.is_some(),
+         };
+-        let result = domain::evaluate(&self.model, parameters, traced, &mut work);
+-        let result = result.and_then(|(score, metrics)| {
+-            if score.is_finite() {
+-                Ok((score, metrics))
+-            } else {
+-                Err(invalid("nonfinite objective"))
+-            }
+-        });
++        let result = finite(domain::evaluate(&self.model, parameters, traced, &mut work));
+         (result, work.used)
+     }
+ 
+-    fn record<'a>(
+-        &self,
+-        c: &'a Candidate,
+-        budget: &Budget,
+-        deadline: Option<Instant>,
+-        metrics_enabled: bool,
+-    ) -> Record<'a> {
+-        match self.run(&c.parameters, c.trace, budget, deadline, metrics_enabled) {
+-            (Ok((score, metrics)), steps) => Record {
++    fn record(c: &Candidate, result: Evaluation, steps: u64) -> Record<'_> {
++        match result {
++            Ok((score, metrics)) => Record {
+                 id: &c.id,
+                 status: "complete",
+                 steps,
+@@ -309,7 +375,7 @@ impl Prepared {
+                 metrics,
+                 detail: None,
+             },
+-            (Err(e), steps) => Record {
++            Err(e) => Record {
+                 id: &c.id,
+                 status: e.status,
+                 steps,
+@@ -345,12 +411,13 @@ impl Prepared {
+         if candidates.iter().filter(|c| c.trace).count() > 16 {
+             return Err("at most 16 traced candidates per batch".into());
+         }
+-        let deadline = budget
+-            .wall_ms
+-            .map(|n| Instant::now() + Duration::from_millis(n));
+-        let records = dispatch(candidates.len(), budget.workers, |index| {
+-            self.record(&candidates[index], &budget, deadline, metrics_enabled)
+-        });
++        let records = self.evaluate_groups(
++            candidates.len(),
++            &budget,
++            metrics_enabled,
++            |i| (candidates[i].parameters.as_slice(), candidates[i].trace),
++            |i, result, steps| Self::record(&candidates[i], result, steps),
++        );
+         Ok(Batch {
+             model_sha256: &self.model_sha256,
+             records,
+@@ -674,4 +741,59 @@ mod tests {
+             assert_eq!(cli, serde_json::from_str::<Value>(&text).unwrap());
+         }
+     }
++
++    /// Interleaved groups (unmonitored budgets) and guarded single-candidate
++    /// runs (a far deadline forces them) give identical JSON text, including
++    /// invalid and traced candidates mixed into a group, partial groups and
++    /// several workers.
++    fn assert_lanes_match_scalar(model: &Value, rows: &[Value]) {
++        let prepared = Prepared::new(&model.to_string()).unwrap();
++        let days = domain::steps(&prepared.model);
++        for count in [2, 3, 5, 8, 9, 13, 17, rows.len()] {
++            let candidates: Vec<_> = (0..count)
++                .map(|i| {
++                    json!({"id": format!("c{i}"), "parameters": rows[i % rows.len()],
++                           "trace": i % 7 == 3})
++                })
++                .collect();
++            let text = Value::from(candidates.clone()).to_string();
++            for workers in [1, 3] {
++                let scalar = json!({"workers": workers, "wall_ms": 3_600_000}).to_string();
++                let lanes = json!({"workers": workers}).to_string();
++                let exact = json!({"workers": workers, "max_steps": days}).to_string();
++                let full = prepared.evaluate_json(&text, &scalar).unwrap();
++                assert_eq!(full, prepared.evaluate_json(&text, &lanes).unwrap());
++                assert_eq!(full, prepared.evaluate_json(&text, &exact).unwrap());
++                let untraced: Vec<_> = candidates
++                    .iter()
++                    .map(|c| json!({"id": c["id"], "parameters": c["parameters"]}))
++                    .collect();
++                let text = Value::from(untraced).to_string();
++                let lean = prepared.scores_json(&text, &scalar).unwrap();
++                assert_eq!(lean, prepared.scores_json(&text, &lanes).unwrap());
++                let short = json!({"workers": workers, "max_steps": days - 1}).to_string();
++                let limited: Value =
++                    serde_json::from_str(&prepared.scores_json(&text, &short).unwrap()).unwrap();
++                for row in limited["records"].as_array().unwrap() {
++                    assert!(row["status"] == "work_limit" || row["status"] == "invalid");
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn reservoir_lanes_match_scalar_runs() {
++        let rows: Vec<Value> = (0..23)
++            .map(|i| match i % 6 {
++                4 => json!([1.5, 0.2]),
++                5 => json!([0.3]),
++                _ => json!([f64::from(i) / 23.0, f64::from(i % 5) / 4.0]),
++            })
++            .collect();
++        assert_lanes_match_scalar(&reservoir(), &rows);
++        let spill = json!({"kind":"reservoir","capacity_m3":50,"initial_m3":50,"outlet_m3_per_day":3,
++            "reserve_m3":0,"inputs":(0..40).map(|i| json!({"inflow_m3":(i * 7) % 20,
++            "evaporation_m3":0.5,"demand_m3":if i % 3 == 0 {0} else {6}})).collect::<Vec<_>>()});
++        assert_lanes_match_scalar(&spill, &rows);
++    }
+ }
+-- 
+2.43.0
+

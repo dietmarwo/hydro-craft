@@ -1,0 +1,28 @@
+# hydro-craft 0.3.0 Rust release checks
+# host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz, rustc 1.97.0 (2d8144b78 2026-07-07), cargo 1.97.0 (c980f4866 2026-06-30)
+$ cargo fmt --check
+fmt: passed (exit 0)
+$ PYO3_PYTHON=/usr/bin/python3.12 cargo clippy --release --locked --all-targets --features python -- -D warnings
+    Checking hydro-craft v0.3.0 (/home/claude/craft5/hydro-craft)
+    Finished `release` profile [optimized] target(s) in 0.81s
+clippy (python): passed (exit 0)
+$ PYO3_PYTHON=/usr/bin/python3.12 cargo clippy --release --locked --all-targets --features python,profiling -- -D warnings
+    Checking hydro-craft v0.3.0 (/home/claude/craft5/hydro-craft)
+    Finished `release` profile [optimized] target(s) in 0.81s
+clippy (python, profiling): passed (exit 0)
+$ cargo test --release --locked
+test pool::tests::every_index_runs_once_across_repeated_and_concurrent_batches ... ok
+test tests::candidate_decoding_matches_plain_derive ... ok
+test pool::tests::panics_reach_the_caller_and_the_pool_keeps_working ... ok
+test tests::model_and_candidate_validation_are_independent ... ok
+test tests::prepared_workers_return_same_completed_records ... ok
+test tests::reservoir_lanes_match_scalar_runs ... ok
+test tests::score_matrix_accepts_dimension_zero_and_rejects_bad_shapes ... ok
+test tests::score_matrix_matches_scores_json ... ok
+test tests::scores_keep_order_status_steps_and_objective ... ok
+test tests::typed_metrics_keep_sorted_json_and_cli_values ... ok
+test tests::catchment_lanes_match_scalar_runs ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+tests: passed (exit 0)

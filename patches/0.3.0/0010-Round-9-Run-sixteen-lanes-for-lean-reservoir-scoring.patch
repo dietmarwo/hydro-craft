@@ -1,0 +1,133 @@
+From 6f94fd96866e43c655acb507979f1a96b7147d52 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:01:17 -0400
+Subject: [PATCH 10/18] Round 9: Run sixteen lanes for lean reservoir scoring
+
+Lean reservoir groups now run sixteen interleaved lanes, then 8, 4
+and 1; full records keep at most eight lanes because their extra
+per-lane state did not benefit. Engine groups grow to sixteen
+reservoir candidates. The shared reservoir_day step is unchanged, so
+results are bit-identical; the lane tests now include a 33-candidate
+batch.
+
+Workload: lean domain2 (48 reservoir scores of 2,400 days), 11 samples
+against round 8.
+Before median: 0.511 ms. After median: 0.405 ms. Speedup: 1.26x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            | 11 ++++++
+ .../round09-lean-domain2.json                 | 36 +++++++++++++++++++
+ src/domain.rs                                 |  6 +++-
+ src/lib.rs                                    |  2 +-
+ 4 files changed, 53 insertions(+), 2 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round09-lean-domain2.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 1398fa3..6221552 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -157,3 +157,14 @@ and the catchment about 3x faster per day.
+ - Expected: a micro-benchmark of the specialized kernel ran 4.1 ns per
+   candidate-day at eight lanes against 7.1 ns for the current four-lane
+   kernel, so about 1.4x on the lean call.
++
++## Round 9: sixteen lanes for lean reservoir scoring
++
++- Change: lean reservoir groups run sixteen interleaved lanes (then 8,
++  4 and 1); full records keep at most eight lanes. Engine groups grow
++  to sixteen reservoir candidates. The shared `reservoir_day` step is
++  unchanged, so results stay bit-identical.
++- Workload: lean `domain2` (48 reservoir scores of 2,400 days), round 8
++  before.
++- Expected: an exploratory build with sixteen lanes ran the lean call
++  in about 0.39 ms against 0.51 ms, so about 1.3x.
+diff --git a/evidence/performance-0.3.0/round09-lean-domain2.json b/evidence/performance-0.3.0/round09-lean-domain2.json
+new file mode 100644
+index 0000000..6b0f231
+--- /dev/null
++++ b/evidence/performance-0.3.0/round09-lean-domain2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain2",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.0005640016,
++    0.0005101729999999999,
++    0.0006645642,
++    0.0005258322,
++    0.0005017972,
++    0.0005181198,
++    0.0005190826,
++    0.0004889016,
++    0.0005005950000000001,
++    0.0005015519999999999,
++    0.0005113353999999999
++  ],
++  "after_seconds": [
++    0.00041312400000000006,
++    0.00040508159999999994,
++    0.00041422860000000003,
++    0.0004343344,
++    0.0003844282,
++    0.0004927842,
++    0.0003981494,
++    0.0004017092,
++    0.00042365679999999996,
++    0.0003980328,
++    0.00039531159999999996
++  ],
++  "medians_seconds": [
++    0.0005113353999999999,
++    0.00040508159999999994
++  ],
++  "speedup": 1.2623022126899865
++}
+diff --git a/src/domain.rs b/src/domain.rs
+index 8d7707f..23d3a4a 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -426,7 +426,7 @@ pub fn group_width(model: &Model) -> usize {
+ }
+ 
+ const CATCHMENT_LANES: usize = 8;
+-const RESERVOIR_LANES: usize = 8;
++const RESERVOIR_LANES: usize = 16;
+ 
+ /// Evaluate untraced candidates together over the shared daily inputs.
+ ///
+@@ -504,13 +504,17 @@ pub fn evaluate_lanes(
+             }
+             let mut rest = valid.as_slice();
+             while !rest.is_empty() {
++                // Lean runs use up to sixteen lanes; full records, with more
++                // state per lane, use up to eight.
+                 let width = match rest.len() {
++                    16.. if !metrics => 16,
+                     8.. => 8,
+                     4.. => 4,
+                     _ => 1,
+                 };
+                 let (chunk, tail) = rest.split_at(width);
+                 let states = match (width, metrics) {
++                    (16, _) => reservoir_lanes::<16, false>(&site, *initial_m3, inputs, chunk),
+                     (8, false) => reservoir_lanes::<8, false>(&site, *initial_m3, inputs, chunk),
+                     (8, true) => reservoir_lanes::<8, true>(&site, *initial_m3, inputs, chunk),
+                     (4, false) => reservoir_lanes::<4, false>(&site, *initial_m3, inputs, chunk),
+diff --git a/src/lib.rs b/src/lib.rs
+index 9d311f8..34f81de 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -813,7 +813,7 @@ mod tests {
+     fn assert_lanes_match_scalar(model: &Value, rows: &[Value]) {
+         let prepared = Prepared::new(&model.to_string()).unwrap();
+         let days = domain::steps(&prepared.model);
+-        for count in [2, 3, 5, 8, 9, 13, 17, rows.len()] {
++        for count in [2, 3, 5, 8, 9, 13, 17, 33, rows.len()] {
+             let candidates: Vec<_> = (0..count)
+                 .map(|i| {
+                     json!({"id": format!("c{i}"), "parameters": rows[i % rows.len()],
+-- 
+2.43.0
+

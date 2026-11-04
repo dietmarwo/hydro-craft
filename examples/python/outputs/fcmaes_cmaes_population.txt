@@ -1,0 +1,4 @@
+135 generations of 32 in 0.10 s; statuses {'complete': 4317, 'invalid': 3}
+best train RMSE 0.20084 mm/day
+validation RMSE 0.2444, test RMSE 0.0431 mm/day
+parameters: capacity=204.2, exponent=2.501, lp=0.7345, kfast=0.2616, kbase=0.03031, percolation=2.523, degree=3.501

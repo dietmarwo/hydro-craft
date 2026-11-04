@@ -1,0 +1,110 @@
+From 8bf5ccee08b606f504481cd10455b7f08c056575 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:55:00 +0100
+Subject: [PATCH 11/12] Skip diagnostic-only work in lean hydro objectives
+
+---
+ src/domain.rs | 56 ++++++++++++++++++++++++++++++---------------------
+ 1 file changed, 33 insertions(+), 23 deletions(-)
+
+diff --git a/src/domain.rs b/src/domain.rs
+index d419103..0e2fe9e 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -180,7 +180,11 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+             let evap_scale = lp * capacity;
+             for d in forcing {
+                 work.step()?;
+-                let before = snow + soil + upper + lower;
++                let before = if work.metrics_enabled {
++                    snow + soil + upper + lower
++                } else {
++                    0.0
++                };
+                 let liquid = if d.temperature_c <= 0.0 {
+                     snow += d.precipitation_mm;
+                     0.0
+@@ -216,20 +220,23 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+                 let base = lower * kbase;
+                 lower -= base;
+                 let runoff = fast + base;
+-                let residual =
+-                    before + d.precipitation_mm - evap - runoff - (snow + soil + upper + lower);
+-                balance += residual;
+-                max_balance = max_balance.max(residual.abs());
++                if work.metrics_enabled {
++                    let residual =
++                        before + d.precipitation_mm - evap - runoff - (snow + soil + upper + lower);
++                    balance += residual;
++                    max_balance = max_balance.max(residual.abs());
++                    if candidate.trace {
++                        trace.push(json!({"day":d.day,"runoff_mm":runoff,
++                        "discharge_m3_s":runoff*area_km2*1000.0/86_400.0,"stores_mm":[snow,soil,upper,lower],
++                        "et_mm":evap,"balance_mm":residual}));
++                    }
++                }
+                 if d.fold != 0
++                    && (work.metrics_enabled || d.fold == 1)
+                     && let Some(y) = d.observed_mm
+                 {
+                     folds[usize::from(d.fold - 1)].record(runoff, y);
+                 }
+-                if candidate.trace {
+-                    trace.push(json!({"day":d.day,"runoff_mm":runoff,
+-                    "discharge_m3_s":runoff*area_km2*1000.0/86_400.0,"stores_mm":[snow,soil,upper,lower],
+-                    "et_mm":evap,"balance_mm":residual}));
+-                }
+             }
+             Ok((
+                 folds[0].rmse(),
+@@ -259,12 +266,13 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+             let (mut streak, mut longest, mut short_days) = (0, 0, 0);
+             let mut max_balance = 0.0_f64;
+             let mut trace = Vec::new();
++            let threshold = target * capacity_m3;
+             for d in inputs {
+                 work.step()?;
+                 let before = store;
+                 // Decide from prior storage. Today's realized inflow is only
+                 // used when executing withdrawals and closing the balance.
+-                let discretionary = gain * (before - target * capacity_m3).max(0.0);
++                let discretionary = gain * (before - threshold).max(0.0);
+                 store += d.inflow_m3;
+                 let evap = store.min(d.evaporation_m3);
+                 store -= evap;
+@@ -277,18 +285,20 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+                 store -= spill;
+                 deficit += shortage;
+                 spill_total += spill;
+-                if shortage > 0.0 {
+-                    short_days += 1;
+-                    streak += 1;
+-                    longest = longest.max(streak);
+-                } else {
+-                    streak = 0;
+-                }
+-                let balance = before + d.inflow_m3 - evap - delivered - release - spill - store;
+-                max_balance = max_balance.max(balance.abs());
+-                if candidate.trace {
+-                    trace.push(json!({"storage_m3":store,"delivered_m3":delivered,
+-                    "release_m3":release,"shortage_m3":shortage,"spill_m3":spill,"evaporation_m3":evap}));
++                if work.metrics_enabled {
++                    if shortage > 0.0 {
++                        short_days += 1;
++                        streak += 1;
++                        longest = longest.max(streak);
++                    } else {
++                        streak = 0;
++                    }
++                    let balance = before + d.inflow_m3 - evap - delivered - release - spill - store;
++                    max_balance = max_balance.max(balance.abs());
++                    if candidate.trace {
++                        trace.push(json!({"storage_m3":store,"delivered_m3":delivered,
++                        "release_m3":release,"shortage_m3":shortage,"spill_m3":spill,"evaporation_m3":evap}));
++                    }
+                 }
+             }
+             Ok((
+-- 
+2.51.1
+

@@ -1,0 +1,660 @@
+{
+  "scenarios": [
+    {
+      "id": "nominal",
+      "model": {
+        "kind": "catchment",
+        "area_km2": 86.4,
+        "forcing": [
+          {
+            "day": 0,
+            "precipitation_mm": 1.0472719770188865,
+            "temperature_c": -2.0409465472510444,
+            "pet_mm": 0.8144835273407967,
+            "observed_mm": null
+          },
+          {
+            "day": 1,
+            "precipitation_mm": 2.154004698768781,
+            "temperature_c": 6.91318765746864,
+            "pet_mm": 0.0763073322046448,
+            "observed_mm": 0.0
+          },
+          {
+            "day": 2,
+            "precipitation_mm": 10.724040800678537,
+            "temperature_c": 0.6541746836064783,
+            "pet_mm": 1.7041732378587373,
+            "observed_mm": 1.5504446940941867
+          },
+          {
+            "day": 3,
+            "precipitation_mm": 3.1932479344393983,
+            "temperature_c": 0.7093832282020305,
+            "pet_mm": 0.6675927892579105,
+            "observed_mm": 1.8197539306808266
+          },
+          {
+            "day": 4,
+            "precipitation_mm": 4.903267050352222,
+            "temperature_c": -2.9816239106285485,
+            "pet_mm": 0.8725515868304368,
+            "observed_mm": 0.9539261792042479
+          },
+          {
+            "day": 5,
+            "precipitation_mm": 1.7522699950084575,
+            "temperature_c": 3.573594109367896,
+            "pet_mm": 0.13975392291836486,
+            "observed_mm": 2.773563347776905
+          },
+          {
+            "day": 6,
+            "precipitation_mm": 6.309179474717266,
+            "temperature_c": 1.931538791376381,
+            "pet_mm": 1.8107973045689978,
+            "observed_mm": 4.093882940140361
+          },
+          {
+            "day": 7,
+            "precipitation_mm": 1.8552912275699018,
+            "temperature_c": -1.436074291253488,
+            "pet_mm": 1.5801436887176032,
+            "observed_mm": 1.9444262356321969
+          },
+          {
+            "day": 8,
+            "precipitation_mm": 0.4247194963397849,
+            "temperature_c": 7.022656028993527,
+            "pet_mm": 1.1468161713618543,
+            "observed_mm": 1.694828434101007
+          },
+          {
+            "day": 9,
+            "precipitation_mm": 5.306434105231266,
+            "temperature_c": 6.216214086146479,
+            "pet_mm": 1.537589494959967,
+            "observed_mm": 2.5282627656161596
+          },
+          {
+            "day": 10,
+            "precipitation_mm": 6.869243163119291,
+            "temperature_c": 5.816462504212362,
+            "pet_mm": 0.4137249413322228,
+            "observed_mm": 3.659348333600442
+          },
+          {
+            "day": 11,
+            "precipitation_mm": 12.178050523811066,
+            "temperature_c": 2.7978244737755826,
+            "pet_mm": 1.6186770492876097,
+            "observed_mm": null
+          },
+          {
+            "day": 12,
+            "precipitation_mm": 6.305263044319762,
+            "temperature_c": 1.3806196661468917,
+            "pet_mm": 1.5385581798278476,
+            "observed_mm": 6.244623560987396
+          },
+          {
+            "day": 13,
+            "precipitation_mm": 10.2550426772813,
+            "temperature_c": 4.533209405271066,
+            "pet_mm": 1.2767065286109975,
+            "observed_mm": 7.212877791845702
+          },
+          {
+            "day": 14,
+            "precipitation_mm": 13.33315262146362,
+            "temperature_c": 6.791084275905925,
+            "pet_mm": 0.972272940287128,
+            "observed_mm": 9.624403905333034
+          },
+          {
+            "day": 15,
+            "precipitation_mm": 13.369404438062942,
+            "temperature_c": 1.1197379500473161,
+            "pet_mm": 0.06368261348220372,
+            "observed_mm": 11.003587075643132
+          },
+          {
+            "day": 16,
+            "precipitation_mm": 15.083463437177443,
+            "temperature_c": -1.0038859249345502,
+            "pet_mm": 1.640380368867662,
+            "observed_mm": 5.496767099683663
+          },
+          {
+            "day": 17,
+            "precipitation_mm": 18.272918237284593,
+            "temperature_c": 4.238815731411872,
+            "pet_mm": 0.34025377534181644,
+            "observed_mm": 17.39273945318019
+          },
+          {
+            "day": 18,
+            "precipitation_mm": 6.738323055834123,
+            "temperature_c": 1.3031263777843298,
+            "pet_mm": 0.14658155624737312,
+            "observed_mm": 13.09167011768166
+          },
+          {
+            "day": 19,
+            "precipitation_mm": 9.135341404029074,
+            "temperature_c": 3.304853659615846,
+            "pet_mm": 0.6722121986196681,
+            "observed_mm": 11.031127356068433
+          },
+          {
+            "day": 20,
+            "precipitation_mm": 3.7812373915615294,
+            "temperature_c": -2.0302697558131637,
+            "pet_mm": 1.2566350454615853,
+            "observed_mm": 5.514356830237306
+          },
+          {
+            "day": 21,
+            "precipitation_mm": 0.2565821850522676,
+            "temperature_c": 0.8710505140802125,
+            "pet_mm": 0.45825952896056843,
+            "observed_mm": 3.9247705919595557
+          },
+          {
+            "day": 22,
+            "precipitation_mm": 10.639949813635292,
+            "temperature_c": 4.9602968623116555,
+            "pet_mm": 1.8183065512735588,
+            "observed_mm": null
+          },
+          {
+            "day": 23,
+            "precipitation_mm": 12.776016784862028,
+            "temperature_c": 7.909724097271072,
+            "pet_mm": 1.9281183446077637,
+            "observed_mm": 8.980958483046884
+          },
+          {
+            "day": 24,
+            "precipitation_mm": 12.599814194484914,
+            "temperature_c": -0.4328949750522444,
+            "pet_mm": 0.9676229652862933,
+            "observed_mm": 4.490189477367403
+          },
+          {
+            "day": 25,
+            "precipitation_mm": 3.5517946114781007,
+            "temperature_c": 7.911535500736386,
+            "pet_mm": 0.8889998402981483,
+            "observed_mm": 8.966110231310568
+          },
+          {
+            "day": 26,
+            "precipitation_mm": 15.033003160550603,
+            "temperature_c": -2.5145715839291167,
+            "pet_mm": 0.26945520127326716,
+            "observed_mm": 4.482913131218825
+          },
+          {
+            "day": 27,
+            "precipitation_mm": 3.8635394008470736,
+            "temperature_c": -0.18001417973803235,
+            "pet_mm": 0.7040950608993524,
+            "observed_mm": 2.2413571765038913
+          },
+          {
+            "day": 28,
+            "precipitation_mm": 5.4385970465350315,
+            "temperature_c": 1.7769544197391909,
+            "pet_mm": 0.8407146334701081,
+            "observed_mm": 5.62598120823831
+          },
+          {
+            "day": 29,
+            "precipitation_mm": 2.172416689632033,
+            "temperature_c": -2.311303476888515,
+            "pet_mm": 0.7101228938557582,
+            "observed_mm": 2.812941903457449
+          },
+          {
+            "day": 30,
+            "precipitation_mm": 1.7757780973472448,
+            "temperature_c": 1.7652034526487732,
+            "pet_mm": 0.017122429545738616,
+            "observed_mm": 4.414910832730181
+          },
+          {
+            "day": 31,
+            "precipitation_mm": 10.71602037213129,
+            "temperature_c": -2.191676080134423,
+            "pet_mm": 1.38841182939847,
+            "observed_mm": 2.2074315530408546
+          },
+          {
+            "day": 32,
+            "precipitation_mm": 8.084145341684948,
+            "temperature_c": 7.838829923771602,
+            "pet_mm": 0.5250800394380999,
+            "observed_mm": 14.835735941371572
+          },
+          {
+            "day": 33,
+            "precipitation_mm": 9.450214808140867,
+            "temperature_c": 5.258964353631962,
+            "pet_mm": 0.6696610810469326,
+            "observed_mm": null
+          },
+          {
+            "day": 34,
+            "precipitation_mm": 6.967340413301029,
+            "temperature_c": 4.030407309509241,
+            "pet_mm": 1.9393721545317557,
+            "observed_mm": 9.188419803814833
+          },
+          {
+            "day": 35,
+            "precipitation_mm": 17.677602762457802,
+            "temperature_c": 1.6094160132610158,
+            "pet_mm": 1.4354358147043214,
+            "observed_mm": 12.378177539260847
+          },
+          {
+            "day": 36,
+            "precipitation_mm": 13.581039032933738,
+            "temperature_c": 1.0932058122483586,
+            "pet_mm": 0.4699268749969303,
+            "observed_mm": 12.261886368036226
+          },
+          {
+            "day": 37,
+            "precipitation_mm": 1.5675295628245056,
+            "temperature_c": 6.667998305728613,
+            "pet_mm": 0.11431842681859328,
+            "observed_mm": 6.877873944487961
+          },
+          {
+            "day": 38,
+            "precipitation_mm": 10.373922495128003,
+            "temperature_c": 2.9129001525625684,
+            "pet_mm": 0.2922784673232155,
+            "observed_mm": 8.372869833514601
+          },
+          {
+            "day": 39,
+            "precipitation_mm": 13.118634339042224,
+            "temperature_c": 7.074055129313049,
+            "pet_mm": 1.5522659396480742,
+            "observed_mm": 10.59961147694365
+          },
+          {
+            "day": 40,
+            "precipitation_mm": 7.785185332371023,
+            "temperature_c": -1.6088304528286608,
+            "pet_mm": 1.94985913243479,
+            "observed_mm": 5.299804775500617
+          },
+          {
+            "day": 41,
+            "precipitation_mm": 10.342069733078214,
+            "temperature_c": 3.9257938775034154,
+            "pet_mm": 1.6045532910420754,
+            "observed_mm": 10.113801706273163
+          },
+          {
+            "day": 42,
+            "precipitation_mm": 7.7249232578549165,
+            "temperature_c": -2.317386588789787,
+            "pet_mm": 0.272031582217523,
+            "observed_mm": 5.056900381280689
+          },
+          {
+            "day": 43,
+            "precipitation_mm": 13.368942740650825,
+            "temperature_c": 0.8449365418178036,
+            "pet_mm": 1.7421544155246766,
+            "observed_mm": 9.563858065289264
+          },
+          {
+            "day": 44,
+            "precipitation_mm": 14.803290176411918,
+            "temperature_c": 7.784830613592927,
+            "pet_mm": 1.33766870872898,
+            "observed_mm": null
+          },
+          {
+            "day": 45,
+            "precipitation_mm": 6.076115582735653,
+            "temperature_c": 5.702200736981338,
+            "pet_mm": 0.05651606855656821,
+            "observed_mm": 9.585442894278762
+          },
+          {
+            "day": 46,
+            "precipitation_mm": 10.431815434225843,
+            "temperature_c": 6.585341346899185,
+            "pet_mm": 1.0294382804122313,
+            "observed_mm": 9.719411370523007
+          },
+          {
+            "day": 47,
+            "precipitation_mm": 2.7474299585179796,
+            "temperature_c": 2.5013476174514935,
+            "pet_mm": 1.090915482138487,
+            "observed_mm": 6.092005106613183
+          },
+          {
+            "day": 48,
+            "precipitation_mm": 7.380010966197292,
+            "temperature_c": 6.827769162297535,
+            "pet_mm": 0.6801617010363472,
+            "observed_mm": 6.088015617352348
+          },
+          {
+            "day": 49,
+            "precipitation_mm": 5.435027767690405,
+            "temperature_c": 2.5693163549574614,
+            "pet_mm": 0.4065441025271217,
+            "observed_mm": 5.460160858264441
+          },
+          {
+            "day": 50,
+            "precipitation_mm": 6.44114453562328,
+            "temperature_c": 1.3798719903325392,
+            "pet_mm": 1.876524977394154,
+            "observed_mm": 5.663313378203618
+          },
+          {
+            "day": 51,
+            "precipitation_mm": 1.6072362595985146,
+            "temperature_c": -0.8319564420249979,
+            "pet_mm": 0.398998689027356,
+            "observed_mm": 2.8316566700607217
+          },
+          {
+            "day": 52,
+            "precipitation_mm": 19.90530027316001,
+            "temperature_c": 6.79889571807357,
+            "pet_mm": 0.3883265892900496,
+            "observed_mm": 10.947948482234963
+          },
+          {
+            "day": 53,
+            "precipitation_mm": 11.29248980148554,
+            "temperature_c": -2.063899676493402,
+            "pet_mm": 0.6340564054808155,
+            "observed_mm": 5.4739742317873485
+          },
+          {
+            "day": 54,
+            "precipitation_mm": 6.822884910484359,
+            "temperature_c": 2.914501975984452,
+            "pet_mm": 1.858748642958847,
+            "observed_mm": 10.0213020792639
+          },
+          {
+            "day": 55,
+            "precipitation_mm": 16.180388619818725,
+            "temperature_c": 2.8760175517939466,
+            "pet_mm": 1.5721601084156764,
+            "observed_mm": null
+          },
+          {
+            "day": 56,
+            "precipitation_mm": 9.679180755061944,
+            "temperature_c": 5.036163608595112,
+            "pet_mm": 1.5539088849458782,
+            "observed_mm": 10.801710761196189
+          },
+          {
+            "day": 57,
+            "precipitation_mm": 5.13703476097632,
+            "temperature_c": 6.1605474882608835,
+            "pet_mm": 1.155888346838231,
+            "observed_mm": 7.5593065925887934
+          },
+          {
+            "day": 58,
+            "precipitation_mm": 9.722399166304132,
+            "temperature_c": 1.3539464701673456,
+            "pet_mm": 0.44829961419612485,
+            "observed_mm": 7.7451648335517
+          },
+          {
+            "day": 59,
+            "precipitation_mm": 10.025151062750663,
+            "temperature_c": -1.61283147553161,
+            "pet_mm": 1.269565507858405,
+            "observed_mm": 3.8725824156781687
+          },
+          {
+            "day": 60,
+            "precipitation_mm": 17.96536502149534,
+            "temperature_c": 5.695786324241537,
+            "pet_mm": 1.2183155711047546,
+            "observed_mm": 15.079747422586742
+          },
+          {
+            "day": 61,
+            "precipitation_mm": 9.88948842039623,
+            "temperature_c": 4.653603914610014,
+            "pet_mm": 0.24463264184101874,
+            "observed_mm": 11.882192034312178
+          },
+          {
+            "day": 62,
+            "precipitation_mm": 1.0487074197300816,
+            "temperature_c": 6.47811780175847,
+            "pet_mm": 0.723682149614145,
+            "observed_mm": 6.451933614637107
+          },
+          {
+            "day": 63,
+            "precipitation_mm": 13.378945865601445,
+            "temperature_c": 1.6283783649695875,
+            "pet_mm": 0.7173411133377898,
+            "observed_mm": 9.446580175957045
+          },
+          {
+            "day": 64,
+            "precipitation_mm": 15.405719347156113,
+            "temperature_c": 0.77336610798586,
+            "pet_mm": 1.5074279187987756,
+            "observed_mm": 12.067479204703197
+          },
+          {
+            "day": 65,
+            "precipitation_mm": 16.40956252769573,
+            "temperature_c": -1.0125634133359842,
+            "pet_mm": 1.9544608862115191,
+            "observed_mm": 6.033739602222457
+          },
+          {
+            "day": 66,
+            "precipitation_mm": 1.2488437953033205,
+            "temperature_c": 1.5620009089163371,
+            "pet_mm": 1.0009495953541878,
+            "observed_mm": null
+          },
+          {
+            "day": 67,
+            "precipitation_mm": 16.58715470499211,
+            "temperature_c": -1.0763345403995639,
+            "pet_mm": 1.1180609371722388,
+            "observed_mm": 2.522215306805191
+          },
+          {
+            "day": 68,
+            "precipitation_mm": 7.370343814664963,
+            "temperature_c": 7.138511287084883,
+            "pet_mm": 0.2446535812051993,
+            "observed_mm": 14.135937116360989
+          },
+          {
+            "day": 69,
+            "precipitation_mm": 5.308321342293853,
+            "temperature_c": 6.017828454524029,
+            "pet_mm": 0.6444680251913006,
+            "observed_mm": 13.047392761035901
+          },
+          {
+            "day": 70,
+            "precipitation_mm": 18.884421047655508,
+            "temperature_c": -2.432356905597014,
+            "pet_mm": 0.7768363103049116,
+            "observed_mm": 6.523696380496246
+          },
+          {
+            "day": 71,
+            "precipitation_mm": 2.149318078987017,
+            "temperature_c": 3.3088335426267017,
+            "pet_mm": 1.9262491569867959,
+            "observed_mm": 8.61413768405834
+          },
+          {
+            "day": 72,
+            "precipitation_mm": 6.493902689616718,
+            "temperature_c": 4.115194208172349,
+            "pet_mm": 0.5318286395199547,
+            "observed_mm": 11.069855818221198
+          },
+          {
+            "day": 73,
+            "precipitation_mm": 8.78443324011065,
+            "temperature_c": 3.286732165400588,
+            "pet_mm": 0.4968266181467218,
+            "observed_mm": 9.693553870206381
+          },
+          {
+            "day": 74,
+            "precipitation_mm": 13.809365399999349,
+            "temperature_c": 2.5109539279680266,
+            "pet_mm": 1.8109263915274498,
+            "observed_mm": 11.472328590724942
+          },
+          {
+            "day": 75,
+            "precipitation_mm": 5.500425448593244,
+            "temperature_c": 7.503400933269072,
+            "pet_mm": 0.3644116688272261,
+            "observed_mm": 7.988333739181108
+          },
+          {
+            "day": 76,
+            "precipitation_mm": 0.3982444745480973,
+            "temperature_c": 4.262251261331441,
+            "pet_mm": 1.4675250371082036,
+            "observed_mm": 4.170398855056419
+          },
+          {
+            "day": 77,
+            "precipitation_mm": 9.54643510805155,
+            "temperature_c": -2.529639227886592,
+            "pet_mm": 1.9962684592889597,
+            "observed_mm": null
+          },
+          {
+            "day": 78,
+            "precipitation_mm": 2.8310351559282854,
+            "temperature_c": 6.57513981362872,
+            "pet_mm": 1.7830652585885878,
+            "observed_mm": 5.269022996660243
+          },
+          {
+            "day": 79,
+            "precipitation_mm": 4.417140125884185,
+            "temperature_c": 6.503329190266815,
+            "pet_mm": 0.9268126413839497,
+            "observed_mm": 4.449279106232252
+          },
+          {
+            "day": 80,
+            "precipitation_mm": 17.99165053802859,
+            "temperature_c": 6.76275750708059,
+            "pet_mm": 1.5485948912116518,
+            "observed_mm": 10.30545858893242
+          },
+          {
+            "day": 81,
+            "precipitation_mm": 5.774204836152325,
+            "temperature_c": 3.3811530985688227,
+            "pet_mm": 1.9626271130731392,
+            "observed_mm": 7.592736507038188
+          },
+          {
+            "day": 82,
+            "precipitation_mm": 6.412467320240188,
+            "temperature_c": 1.2515096180390408,
+            "pet_mm": 1.3759786171872248,
+            "observed_mm": 6.204699760603955
+          },
+          {
+            "day": 83,
+            "precipitation_mm": 1.252712886271945,
+            "temperature_c": -0.2130185504554447,
+            "pet_mm": 0.336040750077816,
+            "observed_mm": 3.102349880301767
+          },
+          {
+            "day": 84,
+            "precipitation_mm": 8.321134203318607,
+            "temperature_c": 1.6747412344624841,
+            "pet_mm": 1.2141170950676548,
+            "observed_mm": 5.184520101747205
+          },
+          {
+            "day": 85,
+            "precipitation_mm": 9.93619377520231,
+            "temperature_c": -1.1875350685369312,
+            "pet_mm": 0.09324214263930597,
+            "observed_mm": 2.592260050873499
+          },
+          {
+            "day": 86,
+            "precipitation_mm": 10.495443964887928,
+            "temperature_c": 5.402423531583336,
+            "pet_mm": 1.8537878026251724,
+            "observed_mm": 10.81923625705226
+          },
+          {
+            "day": 87,
+            "precipitation_mm": 16.7927664807524,
+            "temperature_c": 0.3302808441089513,
+            "pet_mm": 1.7313464861551275,
+            "observed_mm": 12.879107467589694
+          },
+          {
+            "day": 88,
+            "precipitation_mm": 9.347830895205805,
+            "temperature_c": 0.10691732023592904,
+            "pet_mm": 0.18431745623391826,
+            "observed_mm": null
+          },
+          {
+            "day": 89,
+            "precipitation_mm": 8.854248317012388,
+            "temperature_c": 2.9945749575751757,
+            "pet_mm": 0.5585987390186571,
+            "observed_mm": 9.448584117486805
+          }
+        ],
+        "warmup": 8,
+        "train_end": 30,
+        "validation_end": 60
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "id": "baseline",
+      "parameters": [
+        10,
+        1,
+        1,
+        0.5,
+        0.3,
+        2,
+        3
+      ]
+    }
+  ]
+}
