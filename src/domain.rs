@@ -121,7 +121,7 @@ pub fn prepare(mut model: Model) -> Result<Model, String> {
     Ok(model)
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Score {
     squares: f64,
     bias: f64,
@@ -222,104 +222,35 @@ pub fn evaluate(
         Model::Catchment {
             area_km2, forcing, ..
         } => {
-            let &[capacity, exponent, lp, kfast, kbase, percolation, degree] = parameters else {
-                return Err(invalid(
-                    "expected capacity, exponent, lp, kfast, kbase, percolation, degree",
-                ));
-            };
-            if !(1.0..=2000.0).contains(&capacity)
-                || !(0.1..=10.0).contains(&exponent)
-                || !(0.05..=1.0).contains(&lp)
-                || !bounded(kfast, 1.0)
-                || !bounded(kbase, 1.0)
-                || !bounded(percolation, 100.0)
-                || !bounded(degree, 30.0)
-            {
-                return Err(invalid("catchment parameter out of range"));
-            }
-            let (mut snow, mut soil, mut upper, mut lower) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
-            let mut folds: [Score; 3] = Default::default();
-            let mut balance = 0.0_f64;
-            let mut max_balance = 0.0_f64;
+            let p = catchment_parameters(parameters)?;
+            let mut state = CatchmentState::default();
             let mut trace = Vec::with_capacity(if traced { forcing.len() } else { 0 });
-            let evap_scale = lp * capacity;
-            for d in forcing {
-                work.step()?;
-                let before = if work.metrics_enabled {
-                    snow + soil + upper + lower
-                } else {
-                    0.0
-                };
-                let liquid = if d.temperature_c <= 0.0 {
-                    snow += d.precipitation_mm;
-                    0.0
-                } else {
-                    let melt = snow.min(degree * d.temperature_c);
-                    snow -= melt;
-                    d.precipitation_mm + melt
-                };
-                let recharge = if liquid == 0.0 {
-                    0.0
-                } else {
-                    let moisture = soil / capacity;
-                    let fraction = if exponent == 1.0 {
-                        moisture
-                    } else if exponent == 2.0 {
-                        moisture * moisture
-                    } else {
-                        moisture.powf(exponent)
-                    };
-                    liquid * fraction
-                };
-                soil += liquid - recharge;
-                let overflow = (soil - capacity).max(0.0);
-                soil -= overflow;
-                let evap = soil.min(d.pet_mm * (soil / evap_scale).min(1.0));
-                soil -= evap;
-                upper += recharge + overflow;
-                let transfer = upper.min(percolation);
-                upper -= transfer;
-                lower += transfer;
-                let fast = upper * kfast;
-                upper -= fast;
-                let base = lower * kbase;
-                lower -= base;
-                let runoff = fast + base;
-                if work.metrics_enabled {
-                    let residual =
-                        before + d.precipitation_mm - evap - runoff - (snow + soil + upper + lower);
-                    balance += residual;
-                    max_balance = max_balance.max(residual.abs());
+            if work.metrics_enabled {
+                for d in forcing {
+                    work.step()?;
+                    let flows = catchment_day::<true>(&mut state, &p, d);
                     if traced {
                         trace.push(CatchmentDay {
-                            balance_mm: residual,
+                            balance_mm: flows.residual,
                             day: d.day,
-                            discharge_m3_s: runoff * area_km2 * 1000.0 / 86_400.0,
-                            et_mm: evap,
-                            runoff_mm: runoff,
-                            stores_mm: [snow, soil, upper, lower],
+                            discharge_m3_s: flows.runoff * area_km2 * 1000.0 / 86_400.0,
+                            et_mm: flows.evaporation,
+                            runoff_mm: flows.runoff,
+                            stores_mm: [state.snow, state.soil, state.upper, state.lower],
                         });
                     }
+                    score_day::<true>(&mut state.folds, d, flows.runoff);
                 }
-                if d.fold != 0
-                    && (work.metrics_enabled || d.fold == 1)
-                    && let Some(y) = d.observed_mm
-                {
-                    folds[usize::from(d.fold - 1)].record(runoff, y);
+            } else {
+                for d in forcing {
+                    work.step()?;
+                    let flows = catchment_day::<false>(&mut state, &p, d);
+                    score_day::<false>(&mut state.folds, d, flows.runoff);
                 }
             }
             Ok((
-                folds[0].rmse(),
-                work.metrics(|| {
-                    Metrics::Catchment(CatchmentMetrics {
-                        balance_mm: balance,
-                        max_daily_balance_mm: max_balance,
-                        test: folds[2].result(),
-                        trace: traced.then_some(trace),
-                        train: folds[0].result(),
-                        validation: folds[1].result(),
-                    })
-                }),
+                state.score(),
+                work.metrics(|| state.metrics(traced.then_some(trace))),
             ))
         }
         Model::Reservoir {
@@ -489,11 +420,12 @@ pub fn steps(model: &Model) -> u64 {
 /// the model has no interleaved kernel.
 pub fn group_width(model: &Model) -> usize {
     match model {
-        Model::Catchment { .. } => 1,
+        Model::Catchment { .. } => CATCHMENT_LANES,
         Model::Reservoir { .. } => RESERVOIR_LANES,
     }
 }
 
+const CATCHMENT_LANES: usize = 4;
 const RESERVOIR_LANES: usize = 8;
 
 /// Evaluate untraced candidates together over the shared daily inputs.
@@ -510,7 +442,41 @@ pub fn evaluate_lanes(
 ) -> Vec<(Evaluation, u64)> {
     let days = steps(model);
     match model {
-        Model::Catchment { .. } => unreachable!("catchment has no interleaved kernel"),
+        Model::Catchment { forcing, .. } => {
+            let mut results: Vec<(Evaluation, u64)> = Vec::with_capacity(parameters.len());
+            let mut valid = Vec::with_capacity(parameters.len());
+            for (i, p) in parameters.iter().enumerate() {
+                match catchment_parameters(p) {
+                    Ok(p) => {
+                        valid.push((i, p));
+                        results.push((Ok((0.0, None)), days));
+                    }
+                    Err(e) => results.push((Err(e), 0)),
+                }
+            }
+            let mut rest = valid.as_slice();
+            while !rest.is_empty() {
+                let width = match rest.len() {
+                    4.. => 4,
+                    2.. => 2,
+                    _ => 1,
+                };
+                let (chunk, tail) = rest.split_at(width);
+                let states = match (width, metrics) {
+                    (4, false) => catchment_lanes::<4, false>(forcing, chunk),
+                    (4, true) => catchment_lanes::<4, true>(forcing, chunk),
+                    (2, false) => catchment_lanes::<2, false>(forcing, chunk),
+                    (2, true) => catchment_lanes::<2, true>(forcing, chunk),
+                    (_, false) => catchment_lanes::<1, false>(forcing, chunk),
+                    (_, true) => catchment_lanes::<1, true>(forcing, chunk),
+                };
+                for (&(i, _), state) in chunk.iter().zip(states) {
+                    results[i].0 = Ok((state.score(), metrics.then(|| state.metrics(None))));
+                }
+                rest = tail;
+            }
+            results
+        }
         Model::Reservoir {
             capacity_m3,
             initial_m3,
@@ -574,6 +540,179 @@ fn reservoir_lanes<const L: usize, const METRICS: bool>(
     for d in inputs {
         for l in 0..L {
             reservoir_day::<METRICS>(&mut states[l], threshold[l], gain[l], site, d);
+        }
+    }
+    states.to_vec()
+}
+
+/// Candidate parameters with the derived evapotranspiration scale.
+#[derive(Clone, Copy)]
+struct CatchmentParameters {
+    capacity: f64,
+    exponent: f64,
+    kfast: f64,
+    kbase: f64,
+    percolation: f64,
+    degree: f64,
+    evap_scale: f64,
+}
+
+fn catchment_parameters(parameters: &[f64]) -> Result<CatchmentParameters, crate::Failure> {
+    let &[capacity, exponent, lp, kfast, kbase, percolation, degree] = parameters else {
+        return Err(invalid(
+            "expected capacity, exponent, lp, kfast, kbase, percolation, degree",
+        ));
+    };
+    if !(1.0..=2000.0).contains(&capacity)
+        || !(0.1..=10.0).contains(&exponent)
+        || !(0.05..=1.0).contains(&lp)
+        || !bounded(kfast, 1.0)
+        || !bounded(kbase, 1.0)
+        || !bounded(percolation, 100.0)
+        || !bounded(degree, 30.0)
+    {
+        return Err(invalid("catchment parameter out of range"));
+    }
+    Ok(CatchmentParameters {
+        capacity,
+        exponent,
+        kfast,
+        kbase,
+        percolation,
+        degree,
+        evap_scale: lp * capacity,
+    })
+}
+
+/// Candidate-local catchment stores, fold scores and balance diagnostics.
+#[derive(Clone, Copy, Default)]
+struct CatchmentState {
+    snow: f64,
+    soil: f64,
+    upper: f64,
+    lower: f64,
+    folds: [Score; 3],
+    balance: f64,
+    max_balance: f64,
+}
+
+impl CatchmentState {
+    fn score(&self) -> f64 {
+        self.folds[0].rmse()
+    }
+    fn metrics(&self, trace: Option<Vec<CatchmentDay>>) -> Metrics {
+        Metrics::Catchment(CatchmentMetrics {
+            balance_mm: self.balance,
+            max_daily_balance_mm: self.max_balance,
+            test: self.folds[2].result(),
+            trace,
+            train: self.folds[0].result(),
+            validation: self.folds[1].result(),
+        })
+    }
+}
+
+struct CatchmentFlows {
+    runoff: f64,
+    evaporation: f64,
+    residual: f64,
+}
+
+/// Advance one catchment day. Scalar and interleaved evaluation share this
+/// function, so every candidate performs the same floating-point operations
+/// in the same order on either path.
+#[inline(always)]
+fn catchment_day<const METRICS: bool>(
+    s: &mut CatchmentState,
+    p: &CatchmentParameters,
+    d: &Day,
+) -> CatchmentFlows {
+    let before = if METRICS {
+        s.snow + s.soil + s.upper + s.lower
+    } else {
+        0.0
+    };
+    let liquid = if d.temperature_c <= 0.0 {
+        s.snow += d.precipitation_mm;
+        0.0
+    } else {
+        let melt = s.snow.min(p.degree * d.temperature_c);
+        s.snow -= melt;
+        d.precipitation_mm + melt
+    };
+    let recharge = if liquid == 0.0 {
+        0.0
+    } else {
+        let moisture = s.soil / p.capacity;
+        let fraction = if p.exponent == 1.0 {
+            moisture
+        } else if p.exponent == 2.0 {
+            moisture * moisture
+        } else {
+            moisture.powf(p.exponent)
+        };
+        liquid * fraction
+    };
+    s.soil += liquid - recharge;
+    let overflow = (s.soil - p.capacity).max(0.0);
+    s.soil -= overflow;
+    let evaporation = s.soil.min(d.pet_mm * (s.soil / p.evap_scale).min(1.0));
+    s.soil -= evaporation;
+    s.upper += recharge + overflow;
+    let transfer = s.upper.min(p.percolation);
+    s.upper -= transfer;
+    s.lower += transfer;
+    let fast = s.upper * p.kfast;
+    s.upper -= fast;
+    let base = s.lower * p.kbase;
+    s.lower -= base;
+    let runoff = fast + base;
+    let residual = if METRICS {
+        let residual = before + d.precipitation_mm
+            - evaporation
+            - runoff
+            - (s.snow + s.soil + s.upper + s.lower);
+        s.balance += residual;
+        s.max_balance = s.max_balance.max(residual.abs());
+        residual
+    } else {
+        0.0
+    };
+    CatchmentFlows {
+        runoff,
+        evaporation,
+        residual,
+    }
+}
+
+/// Score one simulated day. Lean runs score the training fold only; full
+/// runs also score validation and test.
+#[inline(always)]
+fn score_day<const METRICS: bool>(folds: &mut [Score; 3], d: &Day, runoff: f64) {
+    if d.fold != 0
+        && (METRICS || d.fold == 1)
+        && let Some(y) = d.observed_mm
+    {
+        folds[usize::from(d.fold - 1)].record(runoff, y);
+    }
+}
+
+/// Advance `L` independent catchment candidates day by day over the shared
+/// forcing. Each lane runs its day step and then its scoring, as the scalar
+/// path does.
+fn catchment_lanes<const L: usize, const METRICS: bool>(
+    forcing: &[Day],
+    lanes: &[(usize, CatchmentParameters)],
+) -> Vec<CatchmentState> {
+    let p: [CatchmentParameters; L] = std::array::from_fn(|l| lanes[l].1);
+    let mut states = [CatchmentState::default(); L];
+    for d in forcing {
+        let mut runoff = [0.0; L];
+        for l in 0..L {
+            runoff[l] = catchment_day::<METRICS>(&mut states[l], &p[l], d).runoff;
+        }
+        for l in 0..L {
+            score_day::<METRICS>(&mut states[l].folds, d, runoff[l]);
         }
     }
     states.to_vec()

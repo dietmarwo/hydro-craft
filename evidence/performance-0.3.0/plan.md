@@ -96,3 +96,15 @@ and the catchment about 3x faster per day.
   before.
 - Expected: the micro-benchmark ran eight interleaved reservoir lanes
   about 6x faster per day than one, so at least 3x on this workload.
+
+## Round 6: interleaved catchment candidates
+
+- Change: the catchment gets the same treatment as the reservoir. Groups
+  of up to four untraced candidates advance together over the shared
+  forcing (widths 4, 2 and 1) through one shared `catchment_day` and
+  `score_day` step, so results stay bit-identical; parameter
+  validation and fold scoring are unchanged.
+- Workload: `domain` (48 full catchment records of 2,400 days), round 5
+  before.
+- Expected: the micro-benchmark ran four interleaved catchment lanes
+  about 3x faster per day than one at exponent 1, so at least 2x.

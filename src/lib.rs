@@ -796,4 +796,41 @@ mod tests {
             "evaporation_m3":0.5,"demand_m3":if i % 3 == 0 {0} else {6}})).collect::<Vec<_>>()});
         assert_lanes_match_scalar(&spill, &rows);
     }
+
+    #[test]
+    fn catchment_lanes_match_scalar_runs() {
+        let example = fixture();
+        let base: Vec<f64> = serde_json::from_value(example["parameters"].clone()).unwrap();
+        let rows: Vec<Value> = (0..23)
+            .map(|i| {
+                let mut p = base.clone();
+                p[0] *= 1.0 + f64::from(i) * 0.04;
+                p[1] = [1.0, 2.0, 1.37, 0.6][i as usize % 4];
+                p[3] = f64::from(i % 5) / 5.0;
+                match i % 9 {
+                    7 => json!([1.0, 2.0]),
+                    8 => {
+                        p[2] = 0.01;
+                        json!(p)
+                    }
+                    _ => json!(p),
+                }
+            })
+            .collect();
+        assert_lanes_match_scalar(&example["model"], &rows);
+        // Snow and dry spells exercise the frozen, melt and zero-liquid branches.
+        let mut cold = example["model"].clone();
+        for (i, day) in cold["forcing"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            day["temperature_c"] = json!(if i % 10 < 4 { -3.0 } else { 2.5 });
+            if i % 6 == 0 {
+                day["precipitation_mm"] = json!(0.0);
+            }
+        }
+        assert_lanes_match_scalar(&cold, &rows);
+    }
 }
