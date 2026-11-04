@@ -7,12 +7,14 @@ use std::{hint::black_box, time::Instant};
 
 /// Build the same models and candidates as `examples/performance.rs`.
 fn workload(example: &Value, mode: &str) -> (Value, Vec<Value>, usize) {
+    let traced = mode == "trace";
     let mut model = example["model"].clone();
     let mut parameters = example["parameters"].clone();
     let (count, workers) = match mode {
         "one" => (1, 1),
         "serial" => (96, 1),
         "parallel" => (96, 4),
+        "trace" => (12, 1),
         "invalid" => (1024, 1),
         "domain" => {
             let year = model["forcing"].as_array().unwrap().clone();
@@ -45,7 +47,7 @@ fn workload(example: &Value, mode: &str) -> (Value, Vec<Value>, usize) {
             } else if let Some(first) = values.as_array_mut().unwrap().first_mut() {
                 *first = json!(first.as_f64().unwrap() * (1.0 + (i % 13) as f64 * 0.003));
             }
-            json!({"id": format!("candidate-{i:04}"), "parameters": values})
+            json!({"id": format!("candidate-{i:04}"), "parameters": values, "trace": traced})
         })
         .collect();
     (model, candidates, workers)
@@ -61,7 +63,9 @@ fn main() {
     let example: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let repeats = 201;
     let mut rows = Vec::new();
-    for mode in ["one", "serial", "parallel", "invalid", "domain", "domain2"] {
+    for mode in [
+        "one", "serial", "parallel", "trace", "invalid", "domain", "domain2",
+    ] {
         let (model, candidates, workers) = workload(&example, mode);
         let prepared = Prepared::new(&model.to_string()).unwrap();
         let budget = json!({"workers": workers}).to_string();
@@ -71,7 +75,12 @@ fn main() {
             .flat_map(|c| c["parameters"].as_array().unwrap().clone())
             .map(|v| v.as_f64().unwrap())
             .collect();
-        for api in ["full", "lean", "matrix"] {
+        let apis: &[&str] = if mode == "trace" {
+            &["full"]
+        } else {
+            &["full", "lean", "matrix"]
+        };
+        for &api in apis {
             let mut phases = [Vec::new(), Vec::new(), Vec::new()];
             let mut totals = Vec::new();
             for _ in 0..repeats {

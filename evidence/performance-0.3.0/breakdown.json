@@ -1,0 +1,195 @@
+{
+  "repeats": 201,
+  "rows": [
+    {
+      "api": "full",
+      "candidates": 1,
+      "decode_us": 0.308,
+      "encode_us": 0.716,
+      "evaluate_us": 2.0719999999999996,
+      "total_us": 3.09,
+      "workers": 1,
+      "workload": "one"
+    },
+    {
+      "api": "lean",
+      "candidates": 1,
+      "decode_us": 0.29,
+      "encode_us": 0.335,
+      "evaluate_us": 2.006,
+      "total_us": 2.6380000000000003,
+      "workers": 1,
+      "workload": "one"
+    },
+    {
+      "api": "matrix",
+      "candidates": 1,
+      "decode_us": null,
+      "encode_us": null,
+      "evaluate_us": null,
+      "total_us": 1.99,
+      "workers": 1,
+      "workload": "one"
+    },
+    {
+      "api": "full",
+      "candidates": 96,
+      "decode_us": 18.244,
+      "encode_us": 52.074999999999996,
+      "evaluate_us": 64.52900000000001,
+      "total_us": 136.74500000000003,
+      "workers": 1,
+      "workload": "serial"
+    },
+    {
+      "api": "lean",
+      "candidates": 96,
+      "decode_us": 19.46,
+      "encode_us": 10.78,
+      "evaluate_us": 44.089,
+      "total_us": 74.711,
+      "workers": 1,
+      "workload": "serial"
+    },
+    {
+      "api": "matrix",
+      "candidates": 96,
+      "decode_us": null,
+      "encode_us": null,
+      "evaluate_us": null,
+      "total_us": 39.94,
+      "workers": 1,
+      "workload": "serial"
+    },
+    {
+      "api": "full",
+      "candidates": 96,
+      "decode_us": 26.615,
+      "encode_us": 54.755,
+      "evaluate_us": 69.794,
+      "total_us": 152.28,
+      "workers": 4,
+      "workload": "parallel"
+    },
+    {
+      "api": "lean",
+      "candidates": 96,
+      "decode_us": 28.503,
+      "encode_us": 13.726999999999999,
+      "evaluate_us": 53.915,
+      "total_us": 99.258,
+      "workers": 4,
+      "workload": "parallel"
+    },
+    {
+      "api": "matrix",
+      "candidates": 96,
+      "decode_us": null,
+      "encode_us": null,
+      "evaluate_us": null,
+      "total_us": 45.648,
+      "workers": 4,
+      "workload": "parallel"
+    },
+    {
+      "api": "full",
+      "candidates": 12,
+      "decode_us": 3.1870000000000003,
+      "encode_us": 253.015,
+      "evaluate_us": 24.874,
+      "total_us": 280.945,
+      "workers": 1,
+      "workload": "trace"
+    },
+    {
+      "api": "full",
+      "candidates": 1024,
+      "decode_us": 963.548,
+      "encode_us": 122.898,
+      "evaluate_us": 106.41699999999999,
+      "total_us": 1205.31,
+      "workers": 1,
+      "workload": "invalid"
+    },
+    {
+      "api": "lean",
+      "candidates": 1024,
+      "decode_us": 994.617,
+      "encode_us": 128.42299999999997,
+      "evaluate_us": 111.97,
+      "total_us": 1245.858,
+      "workers": 1,
+      "workload": "invalid"
+    },
+    {
+      "api": "matrix",
+      "candidates": 1024,
+      "decode_us": null,
+      "encode_us": null,
+      "evaluate_us": null,
+      "total_us": 55.039,
+      "workers": 1,
+      "workload": "invalid"
+    },
+    {
+      "api": "full",
+      "candidates": 48,
+      "decode_us": 12.572,
+      "encode_us": 30.224,
+      "evaluate_us": 783.733,
+      "total_us": 826.663,
+      "workers": 1,
+      "workload": "domain"
+    },
+    {
+      "api": "lean",
+      "candidates": 48,
+      "decode_us": 15.113000000000001,
+      "encode_us": 9.822000000000001,
+      "evaluate_us": 547.8,
+      "total_us": 571.362,
+      "workers": 1,
+      "workload": "domain"
+    },
+    {
+      "api": "matrix",
+      "candidates": 48,
+      "decode_us": null,
+      "encode_us": null,
+      "evaluate_us": null,
+      "total_us": 516.3910000000001,
+      "workers": 1,
+      "workload": "domain"
+    },
+    {
+      "api": "full",
+      "candidates": 48,
+      "decode_us": 9.074,
+      "encode_us": 17.946,
+      "evaluate_us": 794.003,
+      "total_us": 821.031,
+      "workers": 1,
+      "workload": "domain2"
+    },
+    {
+      "api": "lean",
+      "candidates": 48,
+      "decode_us": 8.042,
+      "encode_us": 6.74,
+      "evaluate_us": 376.538,
+      "total_us": 391.52,
+      "workers": 1,
+      "workload": "domain2"
+    },
+    {
+      "api": "matrix",
+      "candidates": 48,
+      "decode_us": null,
+      "encode_us": null,
+      "evaluate_us": null,
+      "total_us": 374.934,
+      "workers": 1,
+      "workload": "domain2"
+    }
+  ]
+}
