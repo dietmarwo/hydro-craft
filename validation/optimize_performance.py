@@ -11,7 +11,9 @@ from scipy.optimize import differential_evolution
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("module")
-    parser.add_argument("--scores", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--scores", action="store_true", help="score through Prepared.scores")
+    modes.add_argument("--matrix", action="store_true", help="score through Prepared.score_matrix")
     args = parser.parse_args()
     package = importlib.import_module(args.module)
     example = package.load_example()
@@ -21,7 +23,10 @@ def main():
 
     def objective(parameters):
         nonlocal failures
-        if args.scores:
+        if args.matrix:
+            scores, statuses, _ = prepared.score_matrix([parameters.tolist()])
+            row = {"status": statuses[0], "score": scores[0]}
+        elif args.scores:
             row = prepared.scores([{"id": "one", "parameters": parameters.tolist()}])["records"][0]
         else:
             row = prepared.evaluate(parameters.tolist())
@@ -42,7 +47,7 @@ def main():
     if row["status"] != "complete":
         raise RuntimeError(row)
     print(json.dumps({
-        "mode": "scores" if args.scores else "full",
+        "mode": "matrix" if args.matrix else "scores" if args.scores else "full",
         "total_seconds": finished - start,
         "prepare_seconds": initialized - start,
         "search_seconds": searched - initialized,

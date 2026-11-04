@@ -1,4 +1,4 @@
-use crate::{Candidate, Evaluation, Work, invalid};
+use crate::{Evaluation, Work, invalid};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -143,21 +143,24 @@ impl Score {
     }
 }
 
-pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Evaluation {
+pub fn evaluate(
+    model: &Model,
+    parameters: &[f64],
+    traced: bool,
+    work: &mut Work<'_>,
+) -> Evaluation {
     let days = match model {
         Model::Catchment { forcing, .. } => forcing.len(),
         Model::Reservoir { inputs, .. } => inputs.len(),
     };
-    if candidate.trace && days > 10_000 {
+    if traced && days > 10_000 {
         return Err(invalid("trace requires at most 10,000 days"));
     }
     match model {
         Model::Catchment {
             area_km2, forcing, ..
         } => {
-            let &[capacity, exponent, lp, kfast, kbase, percolation, degree] =
-                candidate.parameters.as_slice()
-            else {
+            let &[capacity, exponent, lp, kfast, kbase, percolation, degree] = parameters else {
                 return Err(invalid(
                     "expected capacity, exponent, lp, kfast, kbase, percolation, degree",
                 ));
@@ -225,7 +228,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
                         before + d.precipitation_mm - evap - runoff - (snow + soil + upper + lower);
                     balance += residual;
                     max_balance = max_balance.max(residual.abs());
-                    if candidate.trace {
+                    if traced {
                         trace.push(json!({"day":d.day,"runoff_mm":runoff,
                         "discharge_m3_s":runoff*area_km2*1000.0/86_400.0,"stores_mm":[snow,soil,upper,lower],
                         "et_mm":evap,"balance_mm":residual}));
@@ -243,7 +246,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
                 work.metrics(|| {
                     json!({"train":folds[0].result(),"validation":folds[1].result(),
                 "test":folds[2].result(),"balance_mm":balance,"max_daily_balance_mm":max_balance,
-                "trace":candidate.trace.then_some(trace)})
+                "trace":traced.then_some(trace)})
                 }),
             ))
         }
@@ -254,7 +257,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
             reserve_m3,
             inputs,
         } => {
-            let &[target, gain] = candidate.parameters.as_slice() else {
+            let &[target, gain] = parameters else {
                 return Err(invalid("expected target fraction and release gain"));
             };
             if !bounded(target, 1.0) || !bounded(gain, 1.0) {
@@ -295,7 +298,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
                     }
                     let balance = before + d.inflow_m3 - evap - delivered - release - spill - store;
                     max_balance = max_balance.max(balance.abs());
-                    if candidate.trace {
+                    if traced {
                         trace.push(json!({"storage_m3":store,"delivered_m3":delivered,
                         "release_m3":release,"shortage_m3":shortage,"spill_m3":spill,"evaporation_m3":evap}));
                     }
@@ -305,7 +308,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
                 deficit + 0.05 * spill_total,
                 work.metrics(|| json!({"shortage_m3":deficit,"spill_m3":spill_total,
                 "shortage_days":short_days,"longest_shortage_days":longest,"max_balance_m3":max_balance,
-                "trace":candidate.trace.then_some(trace)})),
+                "trace":traced.then_some(trace)})),
             ))
         }
     }

@@ -50,10 +50,47 @@ fn main() {
             json!({"id": format!("candidate-{i:04}"), "parameters": values, "trace": traced})
         })
         .collect();
+    // Row-major parameters for the matrix API, built before timing like the JSON text.
+    let flat: Vec<f64> = candidates
+        .iter()
+        .flat_map(|c| c["parameters"].as_array().unwrap().clone())
+        .map(|v| v.as_f64().unwrap())
+        .collect();
     let candidates = serde_json::to_string(&candidates).unwrap();
     let budget = json!({"workers":workers}).to_string();
     let evaluator = Prepared::new(&model.to_string()).unwrap();
     let lean = std::env::var_os("CRAFT_SCORES").is_some();
+    let matrix = std::env::var_os("CRAFT_MATRIX").is_some();
+    let probe = args.next().as_deref() == Some("probe");
+    if matrix {
+        assert!(!traced, "the matrix API evaluates untraced candidates only");
+        let evaluate = || evaluator.score_matrix(count, &flat, &budget).unwrap();
+        let first = evaluate();
+        if probe {
+            let records: Vec<_> = first
+                .iter()
+                .enumerate()
+                .map(|(i, row)| {
+                    json!({"id": format!("candidate-{i:04}"), "status": row.status,
+                           "steps": row.steps, "score": row.score, "metrics": null, "detail": null})
+                })
+                .collect();
+            println!(
+                "{}",
+                json!({"model_sha256": evaluator.model_sha256(), "records": records,
+                       "schema": concat!(env!("CARGO_PKG_NAME"), ".result/0.1"),
+                       "version": env!("CARGO_PKG_VERSION")})
+            );
+            return;
+        }
+        black_box(first);
+        let start = Instant::now();
+        for _ in 0..repeats {
+            black_box(evaluate());
+        }
+        println!("{}", start.elapsed().as_secs_f64() / f64::from(repeats));
+        return;
+    }
     let evaluate = || {
         if lean {
             evaluator.scores_json(&candidates, &budget)
@@ -62,7 +99,7 @@ fn main() {
         }
     };
     let first = evaluate().unwrap();
-    if args.next().as_deref() == Some("probe") {
+    if probe {
         println!("{first}");
         return;
     }
