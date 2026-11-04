@@ -80,3 +80,19 @@ and the catchment about 3x faster per day.
 - Workload: `trace` (12 traced full records of 90 days), round 3 before.
 - Expected: the profile spent about 1.4 ms building and 0.4 ms encoding
   the per-day maps, so at least 2x.
+
+## Round 5: interleaved reservoir candidates
+
+- Change: when no deadline or cancel file is monitored and `max_steps`
+  covers every simulated day, the engine hands groups of up to eight
+  untraced reservoir candidates to a lane kernel that advances them
+  together over the shared daily inputs (widths 8, 4 and 1). Scalar
+  and lane evaluation share one `reservoir_day` function, so each
+  candidate performs the same floating-point operations in the same
+  order; results are bit-identical. Valid candidates are charged one
+  logical step per day, as before; invalid ones are rejected before
+  their first step. Workers claim whole groups.
+- Workload: `domain2` (48 full reservoir records of 2,400 days), round 4
+  before.
+- Expected: the micro-benchmark ran eight interleaved reservoir lanes
+  about 6x faster per day than one, so at least 3x on this workload.

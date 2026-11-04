@@ -6,6 +6,7 @@ use serde_json::{Value, json, value::RawValue};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
+    ops::Range,
     path::PathBuf,
     sync::{
         OnceLock,
@@ -151,28 +152,50 @@ fn check_budget(budget: &Budget) -> Result<(), String> {
     Ok(())
 }
 
-/// Run `f` for every index in `0..count`, inline or on up to `workers`
-/// concurrent evaluators from the persistent pool, and return the results in
-/// index order.
-fn dispatch<T: Send + Sync>(count: usize, workers: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    if workers == 1 || count == 1 {
-        return (0..count).map(f).collect();
+/// Split `0..count` into consecutive groups of at most `group` indexes, run
+/// `f` on each group inline or on up to `workers` concurrent evaluators from
+/// the persistent pool, and return the results in index order.
+fn dispatch<T: Send + Sync>(
+    count: usize,
+    group: usize,
+    workers: usize,
+    f: impl Fn(Range<usize>) -> Vec<T> + Sync,
+) -> Vec<T> {
+    let groups = count.div_ceil(group);
+    let range = |g: usize| g * group..((g + 1) * group).min(count);
+    if workers == 1 || groups == 1 {
+        let mut out = Vec::with_capacity(count);
+        for g in 0..groups {
+            out.extend(f(range(g)));
+        }
+        return out;
     }
     let next = AtomicUsize::new(0);
-    let slots: Vec<_> = (0..count).map(|_| OnceLock::new()).collect();
-    pool::run(workers.min(count) - 1, &|| {
+    let slots: Vec<_> = (0..groups).map(|_| OnceLock::new()).collect();
+    pool::run(workers.min(groups) - 1, &|| {
         loop {
-            let index = next.fetch_add(1, Ordering::Relaxed);
-            if index >= count {
+            let g = next.fetch_add(1, Ordering::Relaxed);
+            if g >= groups {
                 break;
             }
-            assert!(slots[index].set(f(index)).is_ok(), "duplicate work index");
+            assert!(slots[g].set(f(range(g))).is_ok(), "duplicate work index");
         }
     });
     slots
         .into_iter()
-        .map(|slot| slot.into_inner().expect("missing evaluation"))
+        .flat_map(|slot| slot.into_inner().expect("missing evaluation"))
         .collect()
+}
+
+/// Reject non-finite objectives, as for every evaluation path.
+fn finite(result: Evaluation) -> Evaluation {
+    result.and_then(|(score, metrics)| {
+        if score.is_finite() {
+            Ok((score, metrics))
+        } else {
+            Err(invalid("nonfinite objective"))
+        }
+    })
 }
 
 pub struct Prepared {
@@ -236,24 +259,80 @@ impl Prepared {
         }
         let budget: Budget = serde_json::from_str(budget).map_err(|e| e.to_string())?;
         check_budget(&budget)?;
-        let deadline = budget
-            .wall_ms
-            .map(|n| Instant::now() + Duration::from_millis(n));
-        Ok(dispatch(rows, budget.workers, |row| {
-            let values = &parameters[row * dimension..(row + 1) * dimension];
-            match self.run(values, false, &budget, deadline, false) {
-                (Ok((score, _)), steps) => MatrixScore {
+        Ok(self.evaluate_groups(
+            rows,
+            &budget,
+            false,
+            |row| (&parameters[row * dimension..(row + 1) * dimension], false),
+            |_, result, steps| match result {
+                Ok((score, _)) => MatrixScore {
                     status: "complete",
                     steps,
                     score: Some(score),
                 },
-                (Err(e), steps) => MatrixScore {
+                Err(e) => MatrixScore {
                     status: e.status,
                     steps,
                     score: None,
                 },
+            },
+        ))
+    }
+
+    /// Evaluate `count` candidates given by `input(index) -> (parameters,
+    /// traced)` and map each classified result through `output`.
+    ///
+    /// When no deadline or cancel file is monitored and the step budget cannot
+    /// stop a complete candidate, untraced candidates go through the domain's
+    /// interleaved kernel in groups; otherwise each candidate runs alone with
+    /// a guarded work counter. Both paths produce identical results.
+    fn evaluate_groups<'p, T: Send + Sync>(
+        &self,
+        count: usize,
+        budget: &Budget,
+        metrics_enabled: bool,
+        input: impl Fn(usize) -> (&'p [f64], bool) + Sync,
+        output: impl Fn(usize, Evaluation, u64) -> T + Sync,
+    ) -> Vec<T> {
+        let deadline = budget
+            .wall_ms
+            .map(|n| Instant::now() + Duration::from_millis(n));
+        let unbounded = deadline.is_none()
+            && budget.cancel_file.is_none()
+            && budget.max_steps >= domain::steps(&self.model);
+        let group = if unbounded {
+            domain::group_width(&self.model)
+        } else {
+            1
+        };
+        dispatch(count, group, budget.workers, |range| {
+            if range.len() == 1 {
+                let (parameters, traced) = input(range.start);
+                let (result, steps) =
+                    self.run(parameters, traced, budget, deadline, metrics_enabled);
+                return vec![output(range.start, result, steps)];
             }
-        }))
+            let untraced: Vec<&[f64]> = range
+                .clone()
+                .map(&input)
+                .filter(|(_, traced)| !traced)
+                .map(|(parameters, _)| parameters)
+                .collect();
+            let mut lanes =
+                domain::evaluate_lanes(&self.model, &untraced, metrics_enabled).into_iter();
+            range
+                .map(|index| {
+                    let (parameters, traced) = input(index);
+                    let (result, steps) = if traced {
+                        self.run(parameters, traced, budget, deadline, metrics_enabled)
+                    } else {
+                        let (result, steps) = lanes.next().expect("one lane per candidate");
+                        (finite(result), steps)
+                    };
+                    output(index, result, steps)
+                })
+                .collect()
+        })
     }
 
     fn evaluate_encoded(
@@ -282,26 +361,13 @@ impl Prepared {
             metrics_enabled,
             monitored: deadline.is_some() || budget.cancel_file.is_some(),
         };
-        let result = domain::evaluate(&self.model, parameters, traced, &mut work);
-        let result = result.and_then(|(score, metrics)| {
-            if score.is_finite() {
-                Ok((score, metrics))
-            } else {
-                Err(invalid("nonfinite objective"))
-            }
-        });
+        let result = finite(domain::evaluate(&self.model, parameters, traced, &mut work));
         (result, work.used)
     }
 
-    fn record<'a>(
-        &self,
-        c: &'a Candidate,
-        budget: &Budget,
-        deadline: Option<Instant>,
-        metrics_enabled: bool,
-    ) -> Record<'a> {
-        match self.run(&c.parameters, c.trace, budget, deadline, metrics_enabled) {
-            (Ok((score, metrics)), steps) => Record {
+    fn record(c: &Candidate, result: Evaluation, steps: u64) -> Record<'_> {
+        match result {
+            Ok((score, metrics)) => Record {
                 id: &c.id,
                 status: "complete",
                 steps,
@@ -309,7 +375,7 @@ impl Prepared {
                 metrics,
                 detail: None,
             },
-            (Err(e), steps) => Record {
+            Err(e) => Record {
                 id: &c.id,
                 status: e.status,
                 steps,
@@ -345,12 +411,13 @@ impl Prepared {
         if candidates.iter().filter(|c| c.trace).count() > 16 {
             return Err("at most 16 traced candidates per batch".into());
         }
-        let deadline = budget
-            .wall_ms
-            .map(|n| Instant::now() + Duration::from_millis(n));
-        let records = dispatch(candidates.len(), budget.workers, |index| {
-            self.record(&candidates[index], &budget, deadline, metrics_enabled)
-        });
+        let records = self.evaluate_groups(
+            candidates.len(),
+            &budget,
+            metrics_enabled,
+            |i| (candidates[i].parameters.as_slice(), candidates[i].trace),
+            |i, result, steps| Self::record(&candidates[i], result, steps),
+        );
         Ok(Batch {
             model_sha256: &self.model_sha256,
             records,
@@ -673,5 +740,60 @@ mod tests {
             let cli = run(&request.to_string()).unwrap();
             assert_eq!(cli, serde_json::from_str::<Value>(&text).unwrap());
         }
+    }
+
+    /// Interleaved groups (unmonitored budgets) and guarded single-candidate
+    /// runs (a far deadline forces them) give identical JSON text, including
+    /// invalid and traced candidates mixed into a group, partial groups and
+    /// several workers.
+    fn assert_lanes_match_scalar(model: &Value, rows: &[Value]) {
+        let prepared = Prepared::new(&model.to_string()).unwrap();
+        let days = domain::steps(&prepared.model);
+        for count in [2, 3, 5, 8, 9, 13, 17, rows.len()] {
+            let candidates: Vec<_> = (0..count)
+                .map(|i| {
+                    json!({"id": format!("c{i}"), "parameters": rows[i % rows.len()],
+                           "trace": i % 7 == 3})
+                })
+                .collect();
+            let text = Value::from(candidates.clone()).to_string();
+            for workers in [1, 3] {
+                let scalar = json!({"workers": workers, "wall_ms": 3_600_000}).to_string();
+                let lanes = json!({"workers": workers}).to_string();
+                let exact = json!({"workers": workers, "max_steps": days}).to_string();
+                let full = prepared.evaluate_json(&text, &scalar).unwrap();
+                assert_eq!(full, prepared.evaluate_json(&text, &lanes).unwrap());
+                assert_eq!(full, prepared.evaluate_json(&text, &exact).unwrap());
+                let untraced: Vec<_> = candidates
+                    .iter()
+                    .map(|c| json!({"id": c["id"], "parameters": c["parameters"]}))
+                    .collect();
+                let text = Value::from(untraced).to_string();
+                let lean = prepared.scores_json(&text, &scalar).unwrap();
+                assert_eq!(lean, prepared.scores_json(&text, &lanes).unwrap());
+                let short = json!({"workers": workers, "max_steps": days - 1}).to_string();
+                let limited: Value =
+                    serde_json::from_str(&prepared.scores_json(&text, &short).unwrap()).unwrap();
+                for row in limited["records"].as_array().unwrap() {
+                    assert!(row["status"] == "work_limit" || row["status"] == "invalid");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reservoir_lanes_match_scalar_runs() {
+        let rows: Vec<Value> = (0..23)
+            .map(|i| match i % 6 {
+                4 => json!([1.5, 0.2]),
+                5 => json!([0.3]),
+                _ => json!([f64::from(i) / 23.0, f64::from(i % 5) / 4.0]),
+            })
+            .collect();
+        assert_lanes_match_scalar(&reservoir(), &rows);
+        let spill = json!({"kind":"reservoir","capacity_m3":50,"initial_m3":50,"outlet_m3_per_day":3,
+            "reserve_m3":0,"inputs":(0..40).map(|i| json!({"inflow_m3":(i * 7) % 20,
+            "evaporation_m3":0.5,"demand_m3":if i % 3 == 0 {0} else {6}})).collect::<Vec<_>>()});
+        assert_lanes_match_scalar(&spill, &rows);
     }
 }

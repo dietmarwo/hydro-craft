@@ -329,72 +329,252 @@ pub fn evaluate(
             reserve_m3,
             inputs,
         } => {
-            let &[target, gain] = parameters else {
-                return Err(invalid("expected target fraction and release gain"));
+            let (target, gain) = reservoir_controls(parameters)?;
+            let site = Site {
+                capacity: *capacity_m3,
+                outlet: *outlet_m3_per_day,
+                reserve: *reserve_m3,
             };
-            if !bounded(target, 1.0) || !bounded(gain, 1.0) {
-                return Err(invalid("reservoir controls must be in [0,1]"));
-            }
-            let mut store = *initial_m3;
-            let mut deficit = 0.0;
-            let mut spill_total = 0.0;
-            let (mut streak, mut longest, mut short_days) = (0_u64, 0_u64, 0_u64);
-            let mut max_balance = 0.0_f64;
-            let mut trace = Vec::with_capacity(if traced { inputs.len() } else { 0 });
             let threshold = target * capacity_m3;
-            for d in inputs {
-                work.step()?;
-                let before = store;
-                // Decide from prior storage. Today's realized inflow is only
-                // used when executing withdrawals and closing the balance.
-                let discretionary = gain * (before - threshold).max(0.0);
-                store += d.inflow_m3;
-                let evap = store.min(d.evaporation_m3);
-                store -= evap;
-                let available = (store - reserve_m3).max(0.0).min(*outlet_m3_per_day);
-                let delivered = available.min(d.demand_m3);
-                let release = (available - delivered).min(discretionary);
-                let shortage = d.demand_m3 - delivered;
-                store -= delivered + release;
-                let spill = (store - capacity_m3).max(0.0);
-                store -= spill;
-                deficit += shortage;
-                spill_total += spill;
-                if work.metrics_enabled {
-                    if shortage > 0.0 {
-                        short_days += 1;
-                        streak += 1;
-                        longest = longest.max(streak);
-                    } else {
-                        streak = 0;
-                    }
-                    let balance = before + d.inflow_m3 - evap - delivered - release - spill - store;
-                    max_balance = max_balance.max(balance.abs());
+            let mut state = ReservoirState::new(*initial_m3);
+            let mut trace = Vec::with_capacity(if traced { inputs.len() } else { 0 });
+            if work.metrics_enabled {
+                for d in inputs {
+                    work.step()?;
+                    let flows = reservoir_day::<true>(&mut state, threshold, gain, &site, d);
                     if traced {
                         trace.push(ReservoirDay {
-                            delivered_m3: delivered,
-                            evaporation_m3: evap,
-                            release_m3: release,
-                            shortage_m3: shortage,
-                            spill_m3: spill,
-                            storage_m3: store,
+                            delivered_m3: flows.delivered,
+                            evaporation_m3: flows.evaporation,
+                            release_m3: flows.release,
+                            shortage_m3: flows.shortage,
+                            spill_m3: flows.spill,
+                            storage_m3: state.store,
                         });
                     }
                 }
+            } else {
+                for d in inputs {
+                    work.step()?;
+                    reservoir_day::<false>(&mut state, threshold, gain, &site, d);
+                }
             }
             Ok((
-                deficit + 0.05 * spill_total,
-                work.metrics(|| {
-                    Metrics::Reservoir(ReservoirMetrics {
-                        longest_shortage_days: longest,
-                        max_balance_m3: max_balance,
-                        shortage_days: short_days,
-                        shortage_m3: deficit,
-                        spill_m3: spill_total,
-                        trace: traced.then_some(trace),
-                    })
-                }),
+                state.score(),
+                work.metrics(|| state.metrics(traced.then_some(trace))),
             ))
         }
     }
+}
+
+fn reservoir_controls(parameters: &[f64]) -> Result<(f64, f64), crate::Failure> {
+    let &[target, gain] = parameters else {
+        return Err(invalid("expected target fraction and release gain"));
+    };
+    if !bounded(target, 1.0) || !bounded(gain, 1.0) {
+        return Err(invalid("reservoir controls must be in [0,1]"));
+    }
+    Ok((target, gain))
+}
+
+/// Fixed reservoir limits shared by every candidate.
+struct Site {
+    capacity: f64,
+    outlet: f64,
+    reserve: f64,
+}
+
+/// Candidate-local reservoir state and running totals.
+#[derive(Clone, Copy)]
+struct ReservoirState {
+    store: f64,
+    deficit: f64,
+    spill_total: f64,
+    streak: u64,
+    longest: u64,
+    short_days: u64,
+    max_balance: f64,
+}
+
+impl ReservoirState {
+    fn new(initial: f64) -> Self {
+        Self {
+            store: initial,
+            deficit: 0.0,
+            spill_total: 0.0,
+            streak: 0,
+            longest: 0,
+            short_days: 0,
+            max_balance: 0.0,
+        }
+    }
+    fn score(&self) -> f64 {
+        self.deficit + 0.05 * self.spill_total
+    }
+    fn metrics(&self, trace: Option<Vec<ReservoirDay>>) -> Metrics {
+        Metrics::Reservoir(ReservoirMetrics {
+            longest_shortage_days: self.longest,
+            max_balance_m3: self.max_balance,
+            shortage_days: self.short_days,
+            shortage_m3: self.deficit,
+            spill_m3: self.spill_total,
+            trace,
+        })
+    }
+}
+
+struct Flows {
+    evaporation: f64,
+    delivered: f64,
+    release: f64,
+    shortage: f64,
+    spill: f64,
+}
+
+/// Advance one reservoir day. Scalar and interleaved evaluation share this
+/// function, so every candidate performs the same floating-point operations
+/// in the same order on either path.
+#[inline(always)]
+fn reservoir_day<const METRICS: bool>(
+    s: &mut ReservoirState,
+    threshold: f64,
+    gain: f64,
+    site: &Site,
+    d: &ReservoirInput,
+) -> Flows {
+    let before = s.store;
+    // Decide from prior storage. Today's realized inflow is only
+    // used when executing withdrawals and closing the balance.
+    let discretionary = gain * (before - threshold).max(0.0);
+    s.store += d.inflow_m3;
+    let evaporation = s.store.min(d.evaporation_m3);
+    s.store -= evaporation;
+    let available = (s.store - site.reserve).max(0.0).min(site.outlet);
+    let delivered = available.min(d.demand_m3);
+    let release = (available - delivered).min(discretionary);
+    let shortage = d.demand_m3 - delivered;
+    s.store -= delivered + release;
+    let spill = (s.store - site.capacity).max(0.0);
+    s.store -= spill;
+    s.deficit += shortage;
+    s.spill_total += spill;
+    if METRICS {
+        // Branch-free streak bookkeeping: a dry day resets the streak and
+        // leaves the longest streak unchanged.
+        let short = shortage > 0.0;
+        s.short_days += u64::from(short);
+        s.streak = if short { s.streak + 1 } else { 0 };
+        s.longest = s.longest.max(s.streak);
+        let balance = before + d.inflow_m3 - evaporation - delivered - release - spill - s.store;
+        s.max_balance = s.max_balance.max(balance.abs());
+    }
+    Flows {
+        evaporation,
+        delivered,
+        release,
+        shortage,
+        spill,
+    }
+}
+
+/// Steps a complete candidate takes: one per simulated day.
+pub fn steps(model: &Model) -> u64 {
+    match model {
+        Model::Catchment { forcing, .. } => forcing.len() as u64,
+        Model::Reservoir { inputs, .. } => inputs.len() as u64,
+    }
+}
+
+/// Number of candidates the interleaved kernel advances together, or 1 when
+/// the model has no interleaved kernel.
+pub fn group_width(model: &Model) -> usize {
+    match model {
+        Model::Catchment { .. } => 1,
+        Model::Reservoir { .. } => RESERVOIR_LANES,
+    }
+}
+
+const RESERVOIR_LANES: usize = 8;
+
+/// Evaluate untraced candidates together over the shared daily inputs.
+///
+/// The caller guarantees that the work budget cannot stop a candidate: no
+/// deadline or cancel file is monitored and `max_steps >= steps(model)`.
+/// Each candidate then either fails validation before its first step or
+/// simulates every day, so its logical step count is 0 or `steps(model)`.
+/// Results match `evaluate` bit for bit.
+pub fn evaluate_lanes(
+    model: &Model,
+    parameters: &[&[f64]],
+    metrics: bool,
+) -> Vec<(Evaluation, u64)> {
+    let days = steps(model);
+    match model {
+        Model::Catchment { .. } => unreachable!("catchment has no interleaved kernel"),
+        Model::Reservoir {
+            capacity_m3,
+            initial_m3,
+            outlet_m3_per_day,
+            reserve_m3,
+            inputs,
+        } => {
+            let site = Site {
+                capacity: *capacity_m3,
+                outlet: *outlet_m3_per_day,
+                reserve: *reserve_m3,
+            };
+            let mut results: Vec<(Evaluation, u64)> = Vec::with_capacity(parameters.len());
+            let mut valid = Vec::with_capacity(parameters.len());
+            for (i, p) in parameters.iter().enumerate() {
+                match reservoir_controls(p) {
+                    Ok((target, gain)) => {
+                        valid.push((i, target * capacity_m3, gain));
+                        results.push((Ok((0.0, None)), days));
+                    }
+                    Err(e) => results.push((Err(e), 0)),
+                }
+            }
+            let mut rest = valid.as_slice();
+            while !rest.is_empty() {
+                let width = match rest.len() {
+                    8.. => 8,
+                    4.. => 4,
+                    _ => 1,
+                };
+                let (chunk, tail) = rest.split_at(width);
+                let states = match (width, metrics) {
+                    (8, false) => reservoir_lanes::<8, false>(&site, *initial_m3, inputs, chunk),
+                    (8, true) => reservoir_lanes::<8, true>(&site, *initial_m3, inputs, chunk),
+                    (4, false) => reservoir_lanes::<4, false>(&site, *initial_m3, inputs, chunk),
+                    (4, true) => reservoir_lanes::<4, true>(&site, *initial_m3, inputs, chunk),
+                    (_, false) => reservoir_lanes::<1, false>(&site, *initial_m3, inputs, chunk),
+                    (_, true) => reservoir_lanes::<1, true>(&site, *initial_m3, inputs, chunk),
+                };
+                for (&(i, _, _), state) in chunk.iter().zip(states) {
+                    results[i].0 = Ok((state.score(), metrics.then(|| state.metrics(None))));
+                }
+                rest = tail;
+            }
+            results
+        }
+    }
+}
+
+/// Advance `L` independent reservoir candidates day by day. Their update
+/// chains do not depend on each other, so the processor overlaps them.
+fn reservoir_lanes<const L: usize, const METRICS: bool>(
+    site: &Site,
+    initial: f64,
+    inputs: &[ReservoirInput],
+    controls: &[(usize, f64, f64)],
+) -> Vec<ReservoirState> {
+    let threshold: [f64; L] = std::array::from_fn(|l| controls[l].1);
+    let gain: [f64; L] = std::array::from_fn(|l| controls[l].2);
+    let mut states = [ReservoirState::new(initial); L];
+    for d in inputs {
+        for l in 0..L {
+            reservoir_day::<METRICS>(&mut states[l], threshold[l], gain[l], site, d);
+        }
+    }
+    states.to_vec()
 }
