@@ -1,0 +1,465 @@
+From c0792f7f3077c45ce89ad8af022752d763960f01 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:57:36 -0400
+Subject: [PATCH 18/18] Release 0.3.0
+
+Replace packages/ with the 0.3.0 crate, sdist and the wheel built from
+the extracted sdist, and move the 0.2.0 patch series into
+patches/0.2.0/. Add the installed-package release evidence: installed.py
+and release_checks.py (lean, full and matrix parity, tutorial and user
+manual blocks), the campaign manifest replay, the SciPy search, the
+cargo package and Python build logs, and a summary of the installed
+checks. Add the 0.3.0 performance log with the ten rounds, the rejected
+attempt, the cumulative native table, the installed Python optimization
+table, release checks and reproduction steps.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/campaign-replay.json                 |   1 +
+ evidence/installed.json                       |  23 ++
+ evidence/release-0.3.0/cargo-package.txt      |  22 ++
+ evidence/release-0.3.0/installed-checks.txt   |  37 +++
+ evidence/release-0.3.0/python-build.txt       |   8 +
+ evidence/scipy-search.json                    |   1 +
+ evidence/tutorial-check.json                  |   1 +
+ hydro-craft-performance-log-0.3.0.md          | 213 ++++++++++++++++++
+ ...d-reproducible-performance-workloads.patch |   0
+ ...-worker-and-singleton-batches-inline.patch |   0
+ ...l-records-in-input-order-without-sor.patch |   0
+ ...ash-set-to-validate-batch-identities.patch |   0
+ ...the-typed-prepared-response-directly.patch |   0
+ ...te-identifiers-through-serialization.patch |   0
+ ...en-the-unmonitored-work-counter-path.patch |   0
+ ...tive-path-with-full-feasibility-chec.patch |   0
+ ...epare-daily-observation-fold-indexes.patch |   0
+ ...plete-domain-performance-iteration-9.patch |   0
+ ...c-only-work-in-lean-hydro-objectives.patch |   0
+ ...ance-release-tutorials-and-architect.patch |   0
+ 20 files changed, 306 insertions(+)
+ create mode 100644 evidence/campaign-replay.json
+ create mode 100644 evidence/installed.json
+ create mode 100644 evidence/release-0.3.0/cargo-package.txt
+ create mode 100644 evidence/release-0.3.0/installed-checks.txt
+ create mode 100644 evidence/release-0.3.0/python-build.txt
+ create mode 100644 evidence/scipy-search.json
+ create mode 100644 evidence/tutorial-check.json
+ create mode 100644 hydro-craft-performance-log-0.3.0.md
+ rename patches/{ => 0.2.0}/0001-Add-reproducible-performance-workloads.patch (100%)
+ rename patches/{ => 0.2.0}/0002-Run-single-worker-and-singleton-batches-inline.patch (100%)
+ rename patches/{ => 0.2.0}/0003-Assemble-parallel-records-in-input-order-without-sor.patch (100%)
+ rename patches/{ => 0.2.0}/0004-Use-a-sized-hash-set-to-validate-batch-identities.patch (100%)
+ rename patches/{ => 0.2.0}/0005-Serialize-the-typed-prepared-response-directly.patch (100%)
+ rename patches/{ => 0.2.0}/0006-Borrow-candidate-identifiers-through-serialization.patch (100%)
+ rename patches/{ => 0.2.0}/0007-Shorten-the-unmonitored-work-counter-path.patch (100%)
+ rename patches/{ => 0.2.0}/0008-Add-a-lean-objective-path-with-full-feasibility-chec.patch (100%)
+ rename patches/{ => 0.2.0}/0009-Prepare-daily-observation-fold-indexes.patch (100%)
+ rename patches/{ => 0.2.0}/0010-Complete-domain-performance-iteration-9.patch (100%)
+ rename patches/{ => 0.2.0}/0011-Skip-diagnostic-only-work-in-lean-hydro-objectives.patch (100%)
+ rename patches/{ => 0.2.0}/0012-Document-performance-release-tutorials-and-architect.patch (100%)
+
+diff --git a/evidence/campaign-replay.json b/evidence/campaign-replay.json
+new file mode 100644
+index 0000000..0a98ad7
+--- /dev/null
++++ b/evidence/campaign-replay.json
+@@ -0,0 +1 @@
++[{"build_sha256": "cdaafc08b607b1d787e56ad491b6202318cae6fe9c51fe85dcf3bede57beef0d", "key": "72e7cc2366819965725bb532146446799fe9403e3a2b62b18c1cefc93a3e098f", "model_sha256": "a0710253bbefd1b5f5b0a01c2e38ca6f73c73d07d0625bf02a52c84d27b6517d", "record": {"detail": null, "id": "baseline", "metrics": {"balance_mm": -1.7763568394002505e-14, "max_daily_balance_mm": 1.4210854715202004e-14, "test": {"observations": 27, "rmse_mm": 7.925698815375433e-16, "volume_bias_mm": 1.2434497875801753e-14}, "trace": null, "train": {"observations": 20, "rmse_mm": 4.965068306494546e-16, "volume_bias_mm": 3.9968028886505635e-15}, "validation": {"observations": 27, "rmse_mm": 6.280369834735101e-16, "volume_bias_mm": 8.881784197001252e-15}}, "score": 4.965068306494546e-16, "status": "complete", "steps": 90}, "scenario": "nominal"}]
+diff --git a/evidence/installed.json b/evidence/installed.json
+new file mode 100644
+index 0000000..574317a
+--- /dev/null
++++ b/evidence/installed.json
+@@ -0,0 +1,23 @@
++{
++  "installed": true,
++  "ordered_replay": true,
++  "resumed_results": 12,
++  "retained_attempts": 21,
++  "introductory_score": 4.965068306494546e-16,
++  "batch_candidates": 96,
++  "cold_prepare_and_run_seconds": [
++    0.0018378889999439707,
++    0.0015257149998433306,
++    0.0014755600004718872
++  ],
++  "prepared_worker_1_seconds": [
++    0.0012005660000795615,
++    0.0010995659995387541,
++    0.0011358929996276856
++  ],
++  "prepared_worker_4_seconds": [
++    0.0013258560002213926,
++    0.0009687239999038866,
++    0.0011201699999219272
++  ]
++}
+diff --git a/evidence/release-0.3.0/cargo-package.txt b/evidence/release-0.3.0/cargo-package.txt
+new file mode 100644
+index 0000000..ae43b98
+--- /dev/null
++++ b/evidence/release-0.3.0/cargo-package.txt
+@@ -0,0 +1,22 @@
++$ cargo package --locked
++warning: manifest has no documentation, homepage or repository
++  |
++  = note: see https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info
++   Packaging hydro-craft v0.3.0 (/home/claude/craft5/hydro-craft)
++    Updating crates.io index
++    Packaged 103 files, 453.5KiB (115.5KiB compressed)
++   Verifying hydro-craft v0.3.0 (/home/claude/craft5/hydro-craft)
++    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.75s
++cargo package exit 0
++
++$ cargo package --list --locked | wc -l
++103
++f570b6a1363c21b199a119bc492b2181d2012844b76133959ff9a5bc3be6db42  hydro-craft-0.3.0.crate
++
++.cargo_vcs_info.json:
++{
++  "git": {
++    "sha1": "00472e1aaa3a679b1a77d0e297efb56c82464b96"
++  },
++  "path_in_vcs": ""
++}
+\ No newline at end of file
+diff --git a/evidence/release-0.3.0/installed-checks.txt b/evidence/release-0.3.0/installed-checks.txt
+new file mode 100644
+index 0000000..9bbad63
+--- /dev/null
++++ b/evidence/release-0.3.0/installed-checks.txt
+@@ -0,0 +1,37 @@
++# hydro-craft 0.3.0 installed-package release checks
++
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz, Rust 1.97.0,
++CPython 3.12.3. Every step ran inside the shared CPU lock, from a working
++directory outside the source tree, with the wheel built from the
++extracted sdist (see python-build.txt) installed into a fresh venv
++together with numpy 2.3.5, scipy 1.17.0 and fcmaes 2.1.0.
++
++- import check: hydro_craft 0.3.0 loaded from the venv's site-packages.
++- validation/installed.py hydro_craft: passed; output in
++  evidence/installed.json (cancellation and resume retained 21 attempts
++  and recovered 12 completed rows; workers 1 and 4 replayed the same
++  records in reverse order).
++- validation/release_checks.py hydro_craft docs/tutorial.md: passed;
++  lean/full/matrix parity for {}, workers 4, max_steps 1 and a cancel
++  file, NumPy input and rejected shapes, 5 tutorial and 17 manual Python
++  blocks; output in evidence/tutorial-check.json.
++- validation/run_campaign.py twice against one SQLite database: the two
++  manifest outputs were byte-identical (cmp); the first is
++  evidence/campaign-replay.json.
++- validation/optimize_performance.py hydro_craft: 168 evaluations, 72
++  failures, replay score 4.965068306494546e-16; evidence/scipy-search.json.
++- all six examples/python scripts exited 0; their outputs equal the saved
++  examples/python/outputs files apart from timing values.
++- The release wheel's files are byte-identical to those of the wheel
++  built earlier from the version-bump sdist, which produced the Python
++  optimization timings, call costs and example outputs (only the zip
++  container differs). _native.abi3.so SHA-256: cdaafc08b607b1d787e56ad491b6202318cae6fe9c51fe85dcf3bede57beef0d
++- The user manual's shell install commands ran in a scratch directory
++  with python3.12 against the packaged files: venv plus the wheel,
++  numpy/scipy/fcmaes from PyPI, and maturin 1.9.6 building the wheel from
++  the extracted sdist, which then scored the packaged example.
++- These checks ran twice: once with the packages built at commit 1fa20d9
++  and again, after a documentation-only commit labeled the architecture
++  tables, with the final packages in packages/. Both runs passed; the
++  files inside the two wheels are byte-identical, and the evidence files
++  here come from the second run.
+diff --git a/evidence/release-0.3.0/python-build.txt b/evidence/release-0.3.0/python-build.txt
+new file mode 100644
+index 0000000..6ac3142
+--- /dev/null
++++ b/evidence/release-0.3.0/python-build.txt
+@@ -0,0 +1,8 @@
++$ maturin sdist --out DIST
++📦 Built source distribution to DIST/hydro_craft-0.3.0.tar.gz
++$ tar -xzf hydro_craft-0.3.0.tar.gz && cd hydro_craft-0.3.0 && maturin build --release --locked --out DIST -i /usr/bin/python3.12
++📡 Using build options features from pyproject.toml
++    Finished `release` profile [optimized] target(s) in 21.87s
++📦 Built wheel for abi3 Python ≥ 3.10 to DIST/hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl
++ac9b21ccbb1c81937c84e1090e89eee05778b804e301909bf5fd68573510d549  hydro_craft-0.3.0.tar.gz
++e4f132c365f1e06d002584b9cf19f89c867ead707deb8ef3a4aa0dbb65f7927b  hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl
+diff --git a/evidence/scipy-search.json b/evidence/scipy-search.json
+new file mode 100644
+index 0000000..44a846b
+--- /dev/null
++++ b/evidence/scipy-search.json
+@@ -0,0 +1 @@
++{"mode": "full", "total_seconds": 0.01169733200003975, "prepare_seconds": 0.00041833999966911506, "search_seconds": 0.010947472999760066, "replay_seconds": 0.0003315190006105695, "evaluations": 168, "failures": 72, "best": [10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0], "score": 4.965068306494546e-16}
+diff --git a/evidence/tutorial-check.json b/evidence/tutorial-check.json
+new file mode 100644
+index 0000000..dba249e
+--- /dev/null
++++ b/evidence/tutorial-check.json
+@@ -0,0 +1 @@
++{"status": "passed", "tutorial_python_blocks": 5, "manual_python_blocks": 17, "lean_api_and_budget_parity": true, "matrix_api_parity": true}
+diff --git a/hydro-craft-performance-log-0.3.0.md b/hydro-craft-performance-log-0.3.0.md
+new file mode 100644
+index 0000000..03dc7ef
+--- /dev/null
++++ b/hydro-craft-performance-log-0.3.0.md
+@@ -0,0 +1,213 @@
++# hydro-craft performance implementation log
++
++4 November 2026. Version 0.3.0, based on the 0.2.0 delivery imported at
++`f4cc0a3`. The ZIP contains the updated source, runnable examples, an
++ordered patch series, a new [user manual](docs/user-manual.md), the
++reviewed [architecture](docs/architecture.md) with measured performance,
++the [tutorial](docs/tutorial.md), raw evidence and build artifacts. The
++[0.2.0 log](hydro-craft-performance-log-0.2.0.md) is unchanged; its
++patches now live in `patches/0.2.0/`.
++
++All measurements below come from one host: 2 vCPUs, Intel(R) Xeon(R)
++Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3. Every build and
++timing ran inside a shared CPU lock so that no other build or timing
++overlapped it. The 0.2.0 log's numbers came from another host (AMD EPYC
++9V74, 4 CPUs, Rust 1.88) and are not combined with these in any ratio.
++
++## Ten incremental changes
++
++Each row compares a round's benchmark binary with the previous kept
++round's binary using `validation/performance_pair.py --samples 11`, with
++the target workload and expected effect written to
++[`plan.md`](evidence/performance-0.3.0/plan.md) before the timing. The
++fixed rule kept a round at a median speedup of at least 1.03x with the
++paired output check passing. Times are median milliseconds per prepared
++call. "Lean" rows use `scores_json` on both sides; round 1 compares 0.2.0
++lean `scores_json` with the new matrix API on the same candidates.
++
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
++| Round | Commit | Change | Case | Before ms | After ms | Before / after |
++| ---: | --- | --- | --- | ---: | ---: | ---: |
++| 1 | `1d536de` | Add `Prepared::score_matrix` and its Python binding: row-major untraced parameters in, typed status, steps and score out, with no JSON in either direction. | `serial`, lean before, matrix after | 0.225 | 0.186 | 1.21x |
++| 2 | `b8e5de1` | Replace per-batch scoped threads with a persistent worker pool shared by all batches; the caller works alongside up to `workers - 1` helpers. | `parallel` | 0.648 | 0.493 | 1.31x |
++| 3 | `e9a908b` | Serialize typed full-record metrics structs, declared in sorted key order, instead of nested `serde_json::Value` maps. | `serial` | 0.595 | 0.359 | 1.66x |
++| 4 | `4c80d9a` | Record traces as typed day rows in a preallocated vector instead of one `json!` map per day. | `trace` | 1.183 | 0.414 | 2.85x |
++| 5 | `79ab1b6` | Interleave up to eight untraced reservoir candidates over the shared inputs through one shared `reservoir_day` step when the budget cannot stop a candidate. | `domain2` | 2.479 | 0.802 | 3.09x |
++| 6 | `f3a7277` | Interleave up to four untraced catchment candidates through shared catchment step functions. | `domain` | 2.726 | 1.168 | 2.33x |
++| 7 | `d9147d0` | Borrow candidate IDs from the request text and read parameters into exactly sized vectors through a 64-value stack buffer. | `invalid` | 1.465 | 1.262 | 1.16x |
++| 8 | `5313dbe` | Take the frozen or thawed branch once per day for the whole group; give exponents of exactly 1 or 2 branch-free eight-lane kernels. | lean `domain` | 0.805 | 0.511 | 1.58x |
++| 9 | `6f94fd9` | Run sixteen lanes for lean reservoir scoring. | lean `domain2` | 0.511 | 0.405 | 1.26x |
++| 10 | `c8e3aeb` | Run eight lanes for full catchment records of a known exponent class. | `domain` | 1.178 | 0.776 | 1.52x |
++
++Each round passed `cargo fmt --check`, Clippy with the `python` feature
++and warnings denied, the release tests and the paired output check for
++every workload in full, lean and matrix modes. The comparisons ignore the
++package-version string and require matching record order, status,
++detail, steps, provenance and numeric values within the existing
++tolerances; lean comparisons normalize metrics to null and matrix
++comparisons normalize metrics and detail to null. No round changes the
++floating-point operations a candidate performs: the lane kernels and the
++scalar path share one step function per model, and the logical step count
++is unchanged. The probe outputs of the 0.2.0 and round 10 binaries are
++byte-identical for every workload in full and lean mode, and the
++independent domain validation (`validation/validate.py` against the
++release CLI) reproduced the 0.2.0 `evidence/validation.json` byte for
++byte. New tests cover the matrix API's equivalence with `scores_json`
++(invalid rows, `max_steps`, cancel file, deadline, several workers,
++dimension 0 and every rejection), the pool (every index once, concurrent
++batches, panics), sorted typed metrics, lane-versus-scalar equality for
++both models across widths, exponent classes, snow and dry spells, and
++candidate decoding against the plain derive including error messages.
++One non-round commit between rounds 6 and 7 adds the feature-gated
++`profiling` phase timer and `examples/breakdown.rs`; it does not change
++default builds.
++
++## Rejected attempts
++
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
++| Attempt | Change | Case | Before ms | After ms | Before / after |
++| --- | --- | --- | ---: | ---: | ---: |
++| Round 8, first attempt | Size worker dispatch by available CPUs and by one evaluator per 8,192 simulated candidate-days | `parallel` | 0.186 | 0.188 | 0.99x |
++
++The attempt was reverted; its timing is in
++[`rejected/`](evidence/performance-0.3.0/rejected/). Exploratory builds
++that were measured informally and never declared as rounds (reciprocal
++multiplication in the catchment, about 3% on full records and a
++last-bits change; carrying the store total across days; eight lanes for
++the old catchment kernel; singletons through the lane kernel) were
++discarded without a commit.
++
++## Cumulative native results
++
++0.2.0 baseline benchmark binary (built from `f4cc0a3`) against the round
++10 binary, `--samples 11` each
++([`cumulative/`](evidence/performance-0.3.0/cumulative/)). The
++`parallel` workload keeps its four requested workers on this 2-vCPU host.
++The two matrix rows compare 0.2.0 lean scores with 0.3.0 matrix calls,
++because 0.2.0 has no matrix API.
++
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
++| Workload | 0.2.0 ms | 0.3.0 ms | Before / after |
++| --- | ---: | ---: | ---: |
++| Single prepared evaluation (`one`) | 0.005 | 0.003 | 1.55x |
++| 96 full records, one worker (`serial`) | 0.482 | 0.163 | 2.96x |
++| 96 full records, four workers (`parallel`) | 0.611 | 0.179 | 3.41x |
++| 12 traced records (`trace`) | 1.714 | 0.330 | 5.19x |
++| 1,024 invalid candidates (`invalid`) | 1.410 | 1.259 | 1.12x |
++| 48 domain cases (`domain`) | 2.819 | 0.781 | 3.61x |
++| 48 secondary domain cases (`domain2`) | 2.490 | 0.804 | 3.10x |
++| 96 lean scores | 0.224 | 0.084 | 2.66x |
++| 48 lean domain scores | 2.488 | 0.511 | 4.87x |
++| 48 lean secondary scores | 2.372 | 0.396 | 5.99x |
++| 96 matrix scores (0.2.0: lean) | 0.234 | 0.045 | 5.18x |
++| 48 domain matrix scores (0.2.0: lean) | 2.475 | 0.493 | 5.03x |
++
++The paired comparisons alternate process order, exclude start-up and
++model preparation, warm up each prepared evaluator and measure JSON
++decode, evaluation, checks and JSON encode (matrix: typed rows only).
++Ratios from individual rounds do not multiply into the cumulative ratio
++because the timings were rerun. The phase breakdown, per-call costs from
++Python and worker scaling are in the architecture's
++[Performance](docs/architecture.md#performance) section.
++
++## Installed Python optimization
++
++Seven runs per configuration of `validation/optimize_performance.py`,
++interleaved, on one logical CPU (`taskset -c 0`), each configuration in a
++fresh virtual environment: the 0.2.0 wheel from the 0.2.0 `packages/`,
++and the 0.3.0 wheel built with maturin from the 0.3.0 sdist. Times
++include preparation, the seeded SciPy search and the traced replay of the
++winner, excluding Python start-up and imports. The total median is
++calculated per run, separately from the column medians
++([`optimization/runs.json`](evidence/performance-0.3.0/optimization/runs.json)).
++
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
++
++| Configuration | Prepare ms | Search ms | Replay ms | Total ms | v0.2.0-full / total |
++| --- | ---: | ---: | ---: | ---: | ---: |
++| v0.2.0-full | 0.386 | 11.683 | 0.527 | 12.578 | 1.00x |
++| v0.2.0-scores | 0.366 | 10.443 | 0.722 | 11.825 | 1.06x |
++| v0.3.0-full | 0.382 | 11.137 | 0.363 | 11.873 | 1.06x |
++| v0.3.0-scores | 0.415 | 12.920 | 0.403 | 13.658 | 0.92x |
++| v0.3.0-matrix | 0.375 | 8.451 | 0.412 | 9.268 | 1.36x |
++
++The run made **168** objective calls and classified **72** failures in
++every configuration. The selected vector was
++`[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]` with replay score
++**4.965068306494546e-16**; all five configurations agreed on evaluation
++and failure counts, final parameters and replay score exactly. This
++search evaluates one candidate per call, so SciPy and the Python wrapper
++dominate (about 50-70 us per call against 2-3 us of native work), and the
++run-to-run spread (search 7.9-18.0 ms for v0.2.0-scores, 10.0-15.3 ms for
++v0.3.0-full) is larger than the difference between the full and scores
++modes. The matrix mode is the only one clearly faster (search 7.5-9.2 ms
++over its seven runs). With whole populations per call, the matrix API is
++5x cheaper than `scores` and 14x cheaper than `batch` from Python for 96
++candidates ([`python-call-costs-v030.json`](evidence/performance-0.3.0/python-call-costs-v030.json)).
++
++The timed wheel was built from the sdist of the version-bump commit; the
++release wheel's files, including `_native.abi3.so`, are byte-identical to
++it ([`installed-checks.txt`](evidence/release-0.3.0/installed-checks.txt)).
++
++## Release checks
++
++All checks ran inside the CPU lock on the host above
++([`evidence/release-0.3.0/`](evidence/release-0.3.0/)).
++
++- `cargo fmt --check`, Clippy with `--features python` and with
++  `--features python,profiling` (warnings denied, `PYO3_PYTHON` set to
++  CPython 3.12) and `cargo test --release --locked` (11 tests) passed.
++- The CLI request (`models/request.json`, exit 0), `describe` and the
++  native sweep ran; the sweep output and the CLI records are identical to
++  0.2.0's apart from the version string.
++- The independent domain validation passed against the release CLI and
++  reproduced 0.2.0's `evidence/validation.json` byte for byte.
++- The sdist was built, extracted, and the wheel built from it with
++  maturin 1.9.6 and installed into a fresh CPython 3.12 venv. Its ABI is
++  CPython 3.10+ and its target Linux x86-64.
++- `validation/installed.py` and `validation/release_checks.py` passed
++  against the installed wheel: lean, full and matrix parity with mixed
++  valid and invalid candidates, worker count, fixed work limits and
++  cancellation; NumPy input and rejected matrix shapes; the tutorial's
++  5 and the user manual's 17 Python blocks.
++- SQLite cancellation and resume retained 21 attempts and recovered 12
++  completed rows. Two full manifest runs against the same database
++  produced identical output.
++- All six Python examples ran against the installed wheel; outputs match
++  the saved ones apart from timing values. The manual's shell install
++  commands ran in a scratch directory.
++- The Rust crate archive passed `cargo package --locked` verification.
++
++## Reproduction
++
++Build each benchmark binary from its commit with
++`cargo build --release --locked --examples` and keep
++`target/release/examples/performance`, then compare two binaries with
++
++```sh
++python validation/performance_pair.py BEFORE AFTER models/example.json WORKLOAD --samples 11
++```
++
++adding `--before-scores`/`--after-scores` for lean calls and
++`--before-matrix`/`--after-matrix` for the matrix API. `CRAFT_WORKERS=N`
++overrides a workload's worker count; `validation/worker_scaling.py` and
++`cargo run --release --features profiling --example breakdown -- models/example.json`
++reproduce the scaling and phase tables. Run
++`validation/optimize_performance.py hydro_craft` with no flag, `--scores`
++or `--matrix` under `taskset -c 0` for the Python table and
++`validation/python_call_costs.py hydro_craft` for per-call costs.
++
++To reconstruct the history in Git, apply `patches/0.3.0/*.patch` in
++filename order with `git am` to the 0.2.0 source (the import commit). The
++series has 18 patches: the ten rounds, the profiling-tool commit between
++rounds 6 and 7, the measurement commit, the version bump, the examples,
++the documentation, the native release evidence, a documentation commit
++that labels each performance table with its host, and the release
++commit. The series leaves out the
++binary files in `packages/`, which ship in that directory, and the
++final commit that adds the series itself and `SHA256SUMS`. The 0.2.0
++series is in `patches/0.2.0/` and applies to the 0.1.0 source as its log
++describes.
+diff --git a/patches/0001-Add-reproducible-performance-workloads.patch b/patches/0.2.0/0001-Add-reproducible-performance-workloads.patch
+similarity index 100%
+rename from patches/0001-Add-reproducible-performance-workloads.patch
+rename to patches/0.2.0/0001-Add-reproducible-performance-workloads.patch
+diff --git a/patches/0002-Run-single-worker-and-singleton-batches-inline.patch b/patches/0.2.0/0002-Run-single-worker-and-singleton-batches-inline.patch
+similarity index 100%
+rename from patches/0002-Run-single-worker-and-singleton-batches-inline.patch
+rename to patches/0.2.0/0002-Run-single-worker-and-singleton-batches-inline.patch
+diff --git a/patches/0003-Assemble-parallel-records-in-input-order-without-sor.patch b/patches/0.2.0/0003-Assemble-parallel-records-in-input-order-without-sor.patch
+similarity index 100%
+rename from patches/0003-Assemble-parallel-records-in-input-order-without-sor.patch
+rename to patches/0.2.0/0003-Assemble-parallel-records-in-input-order-without-sor.patch
+diff --git a/patches/0004-Use-a-sized-hash-set-to-validate-batch-identities.patch b/patches/0.2.0/0004-Use-a-sized-hash-set-to-validate-batch-identities.patch
+similarity index 100%
+rename from patches/0004-Use-a-sized-hash-set-to-validate-batch-identities.patch
+rename to patches/0.2.0/0004-Use-a-sized-hash-set-to-validate-batch-identities.patch
+diff --git a/patches/0005-Serialize-the-typed-prepared-response-directly.patch b/patches/0.2.0/0005-Serialize-the-typed-prepared-response-directly.patch
+similarity index 100%
+rename from patches/0005-Serialize-the-typed-prepared-response-directly.patch
+rename to patches/0.2.0/0005-Serialize-the-typed-prepared-response-directly.patch
+diff --git a/patches/0006-Borrow-candidate-identifiers-through-serialization.patch b/patches/0.2.0/0006-Borrow-candidate-identifiers-through-serialization.patch
+similarity index 100%
+rename from patches/0006-Borrow-candidate-identifiers-through-serialization.patch
+rename to patches/0.2.0/0006-Borrow-candidate-identifiers-through-serialization.patch
+diff --git a/patches/0007-Shorten-the-unmonitored-work-counter-path.patch b/patches/0.2.0/0007-Shorten-the-unmonitored-work-counter-path.patch
+similarity index 100%
+rename from patches/0007-Shorten-the-unmonitored-work-counter-path.patch
+rename to patches/0.2.0/0007-Shorten-the-unmonitored-work-counter-path.patch
+diff --git a/patches/0008-Add-a-lean-objective-path-with-full-feasibility-chec.patch b/patches/0.2.0/0008-Add-a-lean-objective-path-with-full-feasibility-chec.patch
+similarity index 100%
+rename from patches/0008-Add-a-lean-objective-path-with-full-feasibility-chec.patch
+rename to patches/0.2.0/0008-Add-a-lean-objective-path-with-full-feasibility-chec.patch
+diff --git a/patches/0009-Prepare-daily-observation-fold-indexes.patch b/patches/0.2.0/0009-Prepare-daily-observation-fold-indexes.patch
+similarity index 100%
+rename from patches/0009-Prepare-daily-observation-fold-indexes.patch
+rename to patches/0.2.0/0009-Prepare-daily-observation-fold-indexes.patch
+diff --git a/patches/0010-Complete-domain-performance-iteration-9.patch b/patches/0.2.0/0010-Complete-domain-performance-iteration-9.patch
+similarity index 100%
+rename from patches/0010-Complete-domain-performance-iteration-9.patch
+rename to patches/0.2.0/0010-Complete-domain-performance-iteration-9.patch
+diff --git a/patches/0011-Skip-diagnostic-only-work-in-lean-hydro-objectives.patch b/patches/0.2.0/0011-Skip-diagnostic-only-work-in-lean-hydro-objectives.patch
+similarity index 100%
+rename from patches/0011-Skip-diagnostic-only-work-in-lean-hydro-objectives.patch
+rename to patches/0.2.0/0011-Skip-diagnostic-only-work-in-lean-hydro-objectives.patch
+diff --git a/patches/0012-Document-performance-release-tutorials-and-architect.patch b/patches/0.2.0/0012-Document-performance-release-tutorials-and-architect.patch
+similarity index 100%
+rename from patches/0012-Document-performance-release-tutorials-and-architect.patch
+rename to patches/0.2.0/0012-Document-performance-release-tutorials-and-architect.patch
+-- 
+2.43.0
+

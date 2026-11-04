@@ -1,0 +1,364 @@
+From b8e5de10b0b800efeb71afb583f828bfdadc6eab Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:37:01 -0400
+Subject: [PATCH 02/18] Round 2: Reuse persistent pool threads for parallel
+ batches
+
+Replace per-batch scoped worker threads with helper threads that live
+for the process and wait on a condition variable between batches. The
+calling thread works on its own batch alongside up to workers - 1
+helpers through the same atomic index and per-index result slots, so
+records stay in input order. Concurrent batches share the pool and may
+grow it up to 63 helpers; panics propagate to the caller; a forked
+child process gets a fresh pool.
+
+Workload: parallel (96 full records, four workers, 2-vCPU host), 11
+samples against round 1.
+Before median: 0.648 ms. After median: 0.493 ms. Speedup: 1.31x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            |  13 ++
+ .../performance-0.3.0/round02-parallel.json   |  36 +++
+ src/lib.rs                                    |  24 +-
+ src/pool.rs                                   | 218 ++++++++++++++++++
+ 4 files changed, 278 insertions(+), 13 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round02-parallel.json
+ create mode 100644 src/pool.rs
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 5bf2ab0..3c503ca 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -47,3 +47,16 @@ and the catchment about 3x faster per day.
+   `scores_json` before, matrix after.
+ - Expected: the profile shows about 44 us decode and 19 us encode around
+   about 240 us of evaluation, so about 1.2x.
++
++## Round 2: persistent worker pool
++
++- Change: replace per-batch `std::thread::scope` workers with helper
++  threads that persist for the process and wait on a condition
++  variable. The calling thread evaluates its own batch together with up
++  to `workers - 1` helpers through the same atomic index and per-index
++  result slots, so record order and per-candidate results are unchanged.
++  A forked child gets a fresh pool.
++- Workload: `parallel` (96 full records, four workers on the 2-vCPU
++  host), round 1 before, round 2 after.
++- Expected: thread creation and join cost 100-430 us per batch here,
++  against roughly 0.4 ms of serial work, so at least 2x.
+diff --git a/evidence/performance-0.3.0/round02-parallel.json b/evidence/performance-0.3.0/round02-parallel.json
+new file mode 100644
+index 0000000..a0b3a41
+--- /dev/null
++++ b/evidence/performance-0.3.0/round02-parallel.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "parallel",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.00075803425,
++    0.00050902975,
++    0.0004826325,
++    0.00068726625,
++    0.000827124,
++    0.00064756425,
++    0.0006347435,
++    0.00057819925,
++    0.0006436215,
++    0.00077739425,
++    0.00084867525
++  ],
++  "after_seconds": [
++    0.00049306825,
++    0.000377692,
++    0.000376413,
++    0.0004811335,
++    0.00050197975,
++    0.00056827825,
++    0.00044398775,
++    0.0004650945,
++    0.00057662175,
++    0.000557955,
++    0.00065072825
++  ],
++  "medians_seconds": [
++    0.00064756425,
++    0.00049306825
++  ],
++  "speedup": 1.3133359327030283
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index 94ce57e..b9265f2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,5 @@
+ mod domain;
++mod pool;
+ 
+ use serde::{Deserialize, Serialize};
+ use serde_json::{Value, json, value::RawValue};
+@@ -165,25 +166,22 @@ fn check_budget(budget: &Budget) -> Result<(), String> {
+     Ok(())
+ }
+ 
+-/// Run `f` for every index in `0..count`, inline or on scoped workers, and
+-/// return the results in index order.
++/// Run `f` for every index in `0..count`, inline or on up to `workers`
++/// concurrent evaluators from the persistent pool, and return the results in
++/// index order.
+ fn dispatch<T: Send + Sync>(count: usize, workers: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+     if workers == 1 || count == 1 {
+         return (0..count).map(f).collect();
+     }
+     let next = AtomicUsize::new(0);
+     let slots: Vec<_> = (0..count).map(|_| OnceLock::new()).collect();
+-    std::thread::scope(|scope| {
+-        for _ in 0..workers.min(count) {
+-            scope.spawn(|| {
+-                loop {
+-                    let index = next.fetch_add(1, Ordering::Relaxed);
+-                    if index >= count {
+-                        break;
+-                    }
+-                    assert!(slots[index].set(f(index)).is_ok(), "duplicate work index");
+-                }
+-            });
++    pool::run(workers.min(count) - 1, &|| {
++        loop {
++            let index = next.fetch_add(1, Ordering::Relaxed);
++            if index >= count {
++                break;
++            }
++            assert!(slots[index].set(f(index)).is_ok(), "duplicate work index");
+         }
+     });
+     slots
+diff --git a/src/pool.rs b/src/pool.rs
+new file mode 100644
+index 0000000..6614994
+--- /dev/null
++++ b/src/pool.rs
+@@ -0,0 +1,218 @@
++//! Persistent helper threads for candidate-parallel batches.
++//!
++//! Creating and joining scoped threads for every batch costs far more than a
++//! small batch of domain evaluations on some hosts. Helpers created here live
++//! for the rest of the process and wait on a condition variable between
++//! batches. The calling thread always works on its own batch, so a batch makes
++//! progress even when no helper is free.
++
++use std::{
++    panic::{self, AssertUnwindSafe},
++    sync::{Condvar, Mutex, MutexGuard, PoisonError},
++};
++
++/// Upper bound on helper threads, matching the 64-worker budget limit.
++const MAX_HELPERS: usize = 63;
++
++type Task = &'static (dyn Fn() + Sync);
++
++struct Entry {
++    id: u64,
++    task: Task,
++    /// Helpers that may still join this batch.
++    wanted: usize,
++    /// Helpers currently running `task`.
++    active: usize,
++    panicked: bool,
++}
++
++#[derive(Default)]
++struct State {
++    entries: Vec<Entry>,
++    next_id: u64,
++    helpers: usize,
++}
++
++struct Pool {
++    state: Mutex<State>,
++    work: Condvar,
++    done: Condvar,
++}
++
++fn lock(pool: &Pool) -> MutexGuard<'_, State> {
++    pool.state.lock().unwrap_or_else(PoisonError::into_inner)
++}
++
++/// Return the pool owned by the current process. A forked child does not
++/// inherit the parent's threads, so it gets a fresh pool.
++fn pool() -> &'static Pool {
++    static POOLS: Mutex<Option<(u32, &'static Pool)>> = Mutex::new(None);
++    let pid = std::process::id();
++    let mut current = POOLS.lock().unwrap_or_else(PoisonError::into_inner);
++    match *current {
++        Some((owner, pool)) if owner == pid => pool,
++        _ => {
++            let pool: &'static Pool = Box::leak(Box::new(Pool {
++                state: Mutex::new(State::default()),
++                work: Condvar::new(),
++                done: Condvar::new(),
++            }));
++            *current = Some((pid, pool));
++            pool
++        }
++    }
++}
++
++fn helper(pool: &'static Pool) {
++    let mut state = lock(pool);
++    loop {
++        let Some(entry) = state.entries.iter_mut().find(|e| e.wanted > 0) else {
++            state = pool
++                .work
++                .wait(state)
++                .unwrap_or_else(PoisonError::into_inner);
++            continue;
++        };
++        entry.wanted -= 1;
++        entry.active += 1;
++        let (id, task) = (entry.id, entry.task);
++        drop(state);
++        let ok = panic::catch_unwind(AssertUnwindSafe(task)).is_ok();
++        state = lock(pool);
++        let entry = state
++            .entries
++            .iter_mut()
++            .find(|e| e.id == id)
++            .expect("a batch outlives its active helpers");
++        entry.active -= 1;
++        entry.panicked |= !ok;
++        if entry.active == 0 {
++            pool.done.notify_all();
++        }
++    }
++}
++
++/// Run `task` on the calling thread and on up to `helpers` pool threads at
++/// once, and return after every participant has left `task`. `task` must
++/// share its work through its own synchronization, for example an atomic
++/// index. A panic in any participant is propagated to the caller.
++pub fn run(helpers: usize, task: &(dyn Fn() + Sync)) {
++    let helpers = helpers.min(MAX_HELPERS);
++    if helpers == 0 {
++        task();
++        return;
++    }
++    let pool = pool();
++    // SAFETY: the erased reference is only reachable through this batch's
++    // entry. Helpers copy it while holding the lock and count themselves in
++    // `active`. Before returning or unwinding, this function closes the entry
++    // and waits under the same lock until `active` is zero, so no helper can
++    // use `task` after it goes out of scope.
++    let erased: Task = unsafe { std::mem::transmute::<&(dyn Fn() + Sync), Task>(task) };
++    let id = {
++        let mut state = lock(pool);
++        let id = state.next_id;
++        state.next_id += 1;
++        state.entries.push(Entry {
++            id,
++            task: erased,
++            wanted: helpers,
++            active: 0,
++            panicked: false,
++        });
++        let demand = state
++            .entries
++            .iter()
++            .map(|e| e.wanted + e.active)
++            .sum::<usize>()
++            .min(MAX_HELPERS);
++        while state.helpers < demand {
++            let spawned = std::thread::Builder::new()
++                .name("hydro-craft-worker".into())
++                .spawn(move || helper(pool));
++            if spawned.is_err() {
++                break;
++            }
++            state.helpers += 1;
++        }
++        for _ in 0..helpers {
++            pool.work.notify_one();
++        }
++        id
++    };
++    let mine = panic::catch_unwind(AssertUnwindSafe(task));
++    let mut state = lock(pool);
++    let position = |state: &State| state.entries.iter().position(|e| e.id == id).unwrap();
++    let index = position(&state);
++    state.entries[index].wanted = 0;
++    while state.entries[position(&state)].active > 0 {
++        state = pool
++            .done
++            .wait(state)
++            .unwrap_or_else(PoisonError::into_inner);
++    }
++    let index = position(&state);
++    let entry = state.entries.swap_remove(index);
++    drop(state);
++    if let Err(payload) = mine {
++        panic::resume_unwind(payload);
++    }
++    assert!(!entry.panicked, "a pool worker panicked");
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
++    #[test]
++    fn every_index_runs_once_across_repeated_and_concurrent_batches() {
++        for helpers in [0, 1, 3, 7, 200] {
++            let next = AtomicUsize::new(0);
++            let hits: Vec<_> = (0..500).map(|_| AtomicUsize::new(0)).collect();
++            run(helpers, &|| {
++                loop {
++                    let i = next.fetch_add(1, Ordering::Relaxed);
++                    let Some(hit) = hits.get(i) else { break };
++                    hit.fetch_add(1, Ordering::Relaxed);
++                }
++            });
++            assert!(hits.iter().all(|h| h.load(Ordering::Relaxed) == 1));
++        }
++        std::thread::scope(|scope| {
++            for _ in 0..4 {
++                scope.spawn(|| {
++                    for _ in 0..50 {
++                        let total = AtomicUsize::new(0);
++                        let next = AtomicUsize::new(0);
++                        run(3, &|| {
++                            while next.fetch_add(1, Ordering::Relaxed) < 64 {
++                                total.fetch_add(1, Ordering::Relaxed);
++                            }
++                        });
++                        assert_eq!(total.load(Ordering::Relaxed), 64);
++                    }
++                });
++            }
++        });
++    }
++
++    #[test]
++    fn panics_reach_the_caller_and_the_pool_keeps_working() {
++        let next = AtomicUsize::new(0);
++        let outcome = panic::catch_unwind(|| {
++            run(2, &|| {
++                if next.fetch_add(1, Ordering::Relaxed) < 3 {
++                    std::thread::sleep(std::time::Duration::from_millis(5));
++                    panic!("boom");
++                }
++            })
++        });
++        assert!(outcome.is_err());
++        let count = AtomicUsize::new(0);
++        run(2, &|| {
++            count.fetch_add(1, Ordering::Relaxed);
++        });
++        assert!((1..=3).contains(&count.load(Ordering::Relaxed)));
++    }
++}
+-- 
+2.43.0
+

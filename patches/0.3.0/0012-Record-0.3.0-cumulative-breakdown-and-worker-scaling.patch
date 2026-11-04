@@ -1,0 +1,1223 @@
+From a0d8523427c7e3632352badd23ee7ff746953e90 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:04:53 -0400
+Subject: [PATCH 12/18] Record 0.3.0 cumulative, breakdown and worker-scaling
+ measurements
+
+Add the cumulative native comparison of the 0.2.0 baseline binary with
+round 10, the per-phase breakdown from examples/breakdown.rs (now also
+covering traced records), and worker scaling from the new
+validation/worker_scaling.py, with a README describing the evidence and
+its host. No library code changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/README.md          |  22 ++
+ evidence/performance-0.3.0/breakdown.json     | 195 +++++++++++
+ .../performance-0.3.0/cumulative/domain.json  |  36 ++
+ .../performance-0.3.0/cumulative/domain2.json |  36 ++
+ .../performance-0.3.0/cumulative/invalid.json |  36 ++
+ .../cumulative/lean-domain.json               |  36 ++
+ .../cumulative/lean-domain2.json              |  36 ++
+ .../cumulative/lean-serial.json               |  36 ++
+ .../cumulative/matrix-domain.json             |  36 ++
+ .../cumulative/matrix-serial.json             |  36 ++
+ .../performance-0.3.0/cumulative/one.json     |  36 ++
+ .../cumulative/parallel.json                  |  36 ++
+ .../performance-0.3.0/cumulative/serial.json  |  36 ++
+ .../performance-0.3.0/cumulative/trace.json   |  36 ++
+ .../performance-0.3.0/worker-scaling.json     | 329 ++++++++++++++++++
+ examples/breakdown.rs                         |  15 +-
+ validation/worker_scaling.py                  |  44 +++
+ 17 files changed, 1034 insertions(+), 3 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/README.md
+ create mode 100644 evidence/performance-0.3.0/breakdown.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/domain.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/domain2.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/invalid.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/lean-domain.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/lean-domain2.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/lean-serial.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/matrix-domain.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/matrix-serial.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/one.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/parallel.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/serial.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/trace.json
+ create mode 100644 evidence/performance-0.3.0/worker-scaling.json
+ create mode 100644 validation/worker_scaling.py
+
+diff --git a/evidence/performance-0.3.0/README.md b/evidence/performance-0.3.0/README.md
+new file mode 100644
+index 0000000..6824f1b
+--- /dev/null
++++ b/evidence/performance-0.3.0/README.md
+@@ -0,0 +1,22 @@
++# 0.3.0 performance evidence
++
++Host for every file here: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz
++(KVM), Rust 1.97.0, CPython 3.12.3. Timings ran inside the shared CPU
++lock. Do not combine these numbers with the 0.2.0 log's numbers, which
++came from an AMD EPYC 9V74 host with Rust 1.88.
++
++- `plan.md`: each round's target workload and expected effect, written
++  before its timing, plus the fixed keep/reject rule.
++- `roundNN-<workload>.json`: `validation/performance_pair.py --samples 11`
++  for round NN against the previous kept round. `lean-` marks
++  `--before-scores --after-scores`; round 1 is lean before, matrix after.
++- `rejected/`: timings of reverted attempts.
++- `cumulative/`: the 0.2.0 baseline binary against round 10 for every
++  workload, 11 samples each. `matrix-*` compares 0.2.0 lean scores with
++  0.3.0 matrix calls, because 0.2.0 has no matrix API.
++- `breakdown.json`: `examples/breakdown.rs` (feature `profiling`), median
++  decode, evaluation and encode microseconds of 201 calls per workload
++  and API, plus whole matrix calls.
++- `worker-scaling.json`: `validation/worker_scaling.py` with the round 10
++  benchmark binary at 1-4 workers, 7 alternating samples each.
++- `optimization/`: installed-wheel Python optimization runs.
+diff --git a/evidence/performance-0.3.0/breakdown.json b/evidence/performance-0.3.0/breakdown.json
+new file mode 100644
+index 0000000..fa341d9
+--- /dev/null
++++ b/evidence/performance-0.3.0/breakdown.json
+@@ -0,0 +1,195 @@
++{
++  "repeats": 201,
++  "rows": [
++    {
++      "api": "full",
++      "candidates": 1,
++      "decode_us": 0.308,
++      "encode_us": 0.716,
++      "evaluate_us": 2.0719999999999996,
++      "total_us": 3.09,
++      "workers": 1,
++      "workload": "one"
++    },
++    {
++      "api": "lean",
++      "candidates": 1,
++      "decode_us": 0.29,
++      "encode_us": 0.335,
++      "evaluate_us": 2.006,
++      "total_us": 2.6380000000000003,
++      "workers": 1,
++      "workload": "one"
++    },
++    {
++      "api": "matrix",
++      "candidates": 1,
++      "decode_us": null,
++      "encode_us": null,
++      "evaluate_us": null,
++      "total_us": 1.99,
++      "workers": 1,
++      "workload": "one"
++    },
++    {
++      "api": "full",
++      "candidates": 96,
++      "decode_us": 18.244,
++      "encode_us": 52.074999999999996,
++      "evaluate_us": 64.52900000000001,
++      "total_us": 136.74500000000003,
++      "workers": 1,
++      "workload": "serial"
++    },
++    {
++      "api": "lean",
++      "candidates": 96,
++      "decode_us": 19.46,
++      "encode_us": 10.78,
++      "evaluate_us": 44.089,
++      "total_us": 74.711,
++      "workers": 1,
++      "workload": "serial"
++    },
++    {
++      "api": "matrix",
++      "candidates": 96,
++      "decode_us": null,
++      "encode_us": null,
++      "evaluate_us": null,
++      "total_us": 39.94,
++      "workers": 1,
++      "workload": "serial"
++    },
++    {
++      "api": "full",
++      "candidates": 96,
++      "decode_us": 26.615,
++      "encode_us": 54.755,
++      "evaluate_us": 69.794,
++      "total_us": 152.28,
++      "workers": 4,
++      "workload": "parallel"
++    },
++    {
++      "api": "lean",
++      "candidates": 96,
++      "decode_us": 28.503,
++      "encode_us": 13.726999999999999,
++      "evaluate_us": 53.915,
++      "total_us": 99.258,
++      "workers": 4,
++      "workload": "parallel"
++    },
++    {
++      "api": "matrix",
++      "candidates": 96,
++      "decode_us": null,
++      "encode_us": null,
++      "evaluate_us": null,
++      "total_us": 45.648,
++      "workers": 4,
++      "workload": "parallel"
++    },
++    {
++      "api": "full",
++      "candidates": 12,
++      "decode_us": 3.1870000000000003,
++      "encode_us": 253.015,
++      "evaluate_us": 24.874,
++      "total_us": 280.945,
++      "workers": 1,
++      "workload": "trace"
++    },
++    {
++      "api": "full",
++      "candidates": 1024,
++      "decode_us": 963.548,
++      "encode_us": 122.898,
++      "evaluate_us": 106.41699999999999,
++      "total_us": 1205.31,
++      "workers": 1,
++      "workload": "invalid"
++    },
++    {
++      "api": "lean",
++      "candidates": 1024,
++      "decode_us": 994.617,
++      "encode_us": 128.42299999999997,
++      "evaluate_us": 111.97,
++      "total_us": 1245.858,
++      "workers": 1,
++      "workload": "invalid"
++    },
++    {
++      "api": "matrix",
++      "candidates": 1024,
++      "decode_us": null,
++      "encode_us": null,
++      "evaluate_us": null,
++      "total_us": 55.039,
++      "workers": 1,
++      "workload": "invalid"
++    },
++    {
++      "api": "full",
++      "candidates": 48,
++      "decode_us": 12.572,
++      "encode_us": 30.224,
++      "evaluate_us": 783.733,
++      "total_us": 826.663,
++      "workers": 1,
++      "workload": "domain"
++    },
++    {
++      "api": "lean",
++      "candidates": 48,
++      "decode_us": 15.113000000000001,
++      "encode_us": 9.822000000000001,
++      "evaluate_us": 547.8,
++      "total_us": 571.362,
++      "workers": 1,
++      "workload": "domain"
++    },
++    {
++      "api": "matrix",
++      "candidates": 48,
++      "decode_us": null,
++      "encode_us": null,
++      "evaluate_us": null,
++      "total_us": 516.3910000000001,
++      "workers": 1,
++      "workload": "domain"
++    },
++    {
++      "api": "full",
++      "candidates": 48,
++      "decode_us": 9.074,
++      "encode_us": 17.946,
++      "evaluate_us": 794.003,
++      "total_us": 821.031,
++      "workers": 1,
++      "workload": "domain2"
++    },
++    {
++      "api": "lean",
++      "candidates": 48,
++      "decode_us": 8.042,
++      "encode_us": 6.74,
++      "evaluate_us": 376.538,
++      "total_us": 391.52,
++      "workers": 1,
++      "workload": "domain2"
++    },
++    {
++      "api": "matrix",
++      "candidates": 48,
++      "decode_us": null,
++      "encode_us": null,
++      "evaluate_us": null,
++      "total_us": 374.934,
++      "workers": 1,
++      "workload": "domain2"
++    }
++  ]
++}
+diff --git a/evidence/performance-0.3.0/cumulative/domain.json b/evidence/performance-0.3.0/cumulative/domain.json
+new file mode 100644
+index 0000000..652b074
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0026843915999999997,
++    0.0027617708,
++    0.0026886925999999997,
++    0.0028194976,
++    0.0028442912,
++    0.0026281672,
++    0.002693731,
++    0.0028525904,
++    0.002899098,
++    0.0028262644,
++    0.002828152
++  ],
++  "after_seconds": [
++    0.0007510318,
++    0.0008386839999999999,
++    0.0007656604,
++    0.0008104389999999999,
++    0.0007899302000000001,
++    0.0006960855999999999,
++    0.000819028,
++    0.000780952,
++    0.000775885,
++    0.0007796582,
++    0.0008424783999999999
++  ],
++  "medians_seconds": [
++    0.0028194976,
++    0.000780952
++  ],
++  "speedup": 3.6103340538214894
++}
+diff --git a/evidence/performance-0.3.0/cumulative/domain2.json b/evidence/performance-0.3.0/cumulative/domain2.json
+new file mode 100644
+index 0000000..b120d3d
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/domain2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain2",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0024683042,
++    0.002518661,
++    0.0024904344,
++    0.0024957852,
++    0.0025016036,
++    0.0025099654,
++    0.0024690826,
++    0.0024693106,
++    0.002504444,
++    0.002313066,
++    0.0023241906
++  ],
++  "after_seconds": [
++    0.0008060242000000001,
++    0.0008038584,
++    0.0008124994,
++    0.0008029384,
++    0.0008023906,
++    0.0008128432,
++    0.0007957734,
++    0.0007986689999999999,
++    0.000806473,
++    0.0008735062,
++    0.0007738122
++  ],
++  "medians_seconds": [
++    0.0024904344,
++    0.0008038584
++  ],
++  "speedup": 3.098100859554369
++}
+diff --git a/evidence/performance-0.3.0/cumulative/invalid.json b/evidence/performance-0.3.0/cumulative/invalid.json
+new file mode 100644
+index 0000000..ec0bfdd
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/invalid.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "invalid",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0013246106666666667,
++    0.0022161815,
++    0.0022578296666666666,
++    0.0012951998333333335,
++    0.0013079203333333331,
++    0.0013834593333333332,
++    0.0015103528333333333,
++    0.0014731818333333334,
++    0.0014098556666666668,
++    0.0014087781666666666,
++    0.0014118754999999999
++  ],
++  "after_seconds": [
++    0.0012347695,
++    0.0021669566666666666,
++    0.0012236443333333332,
++    0.0011906168333333334,
++    0.0011945088333333333,
++    0.0012791565,
++    0.0012386243333333334,
++    0.0012593475,
++    0.0012925366666666667,
++    0.0013365358333333334,
++    0.0013019451666666667
++  ],
++  "medians_seconds": [
++    0.0014098556666666668,
++    0.0012593475
++  ],
++  "speedup": 1.119512816491609
++}
+diff --git a/evidence/performance-0.3.0/cumulative/lean-domain.json b/evidence/performance-0.3.0/cumulative/lean-domain.json
+new file mode 100644
+index 0000000..6963b9d
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/lean-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.0025477670000000003,
++    0.0024939066,
++    0.002480204,
++    0.0024875846,
++    0.0025020522,
++    0.0024678358,
++    0.0026276242,
++    0.0025937872000000002,
++    0.002445184,
++    0.0024481602,
++    0.0024092658
++  ],
++  "after_seconds": [
++    0.000536266,
++    0.0005101055999999999,
++    0.0005269856,
++    0.0005283428,
++    0.0005118214,
++    0.0005111752,
++    0.0005117534,
++    0.0005098762,
++    0.000495868,
++    0.00048358740000000003,
++    0.000502361
++  ],
++  "medians_seconds": [
++    0.0024875846,
++    0.0005111752
++  ],
++  "speedup": 4.866403143188481
++}
+diff --git a/evidence/performance-0.3.0/cumulative/lean-domain2.json b/evidence/performance-0.3.0/cumulative/lean-domain2.json
+new file mode 100644
+index 0000000..b4e1429
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/lean-domain2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain2",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.0024325748,
++    0.0022157136,
++    0.002212134,
++    0.0023788824,
++    0.0023855233999999998,
++    0.002370871,
++    0.0023906141999999997,
++    0.0023720254,
++    0.0023710372,
++    0.002382099,
++    0.0023656503999999997
++  ],
++  "after_seconds": [
++    0.0003902248,
++    0.0003953786,
++    0.00037715700000000003,
++    0.0004010624,
++    0.0004037762,
++    0.0004004968,
++    0.0004049772,
++    0.0004058606,
++    0.00039616319999999995,
++    0.00039604280000000004,
++    0.00039252920000000004
++  ],
++  "medians_seconds": [
++    0.0023720254,
++    0.00039616319999999995
++  ],
++  "speedup": 5.987495557386452
++}
+diff --git a/evidence/performance-0.3.0/cumulative/lean-serial.json b/evidence/performance-0.3.0/cumulative/lean-serial.json
+new file mode 100644
+index 0000000..c926f84
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/lean-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.00021477725,
++    0.0002242115,
++    0.00026089275,
++    0.00025325,
++    0.000269098,
++    0.000220589,
++    0.000238879,
++    0.0002129545,
++    0.00022333475,
++    0.00022705875,
++    0.000220222
++  ],
++  "after_seconds": [
++    7.804325e-05,
++    7.5804e-05,
++    0.0001158535,
++    0.00010843,
++    8.4977e-05,
++    8.444225e-05,
++    8.09675e-05,
++    7.487825e-05,
++    9.104375e-05,
++    7.6415e-05,
++    9.4097e-05
++  ],
++  "medians_seconds": [
++    0.0002242115,
++    8.444225e-05
++  ],
++  "speedup": 2.6552051846084157
++}
+diff --git a/evidence/performance-0.3.0/cumulative/matrix-domain.json b/evidence/performance-0.3.0/cumulative/matrix-domain.json
+new file mode 100644
+index 0000000..0692d00
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/matrix-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "scores",
++  "after_mode": "matrix",
++  "before_seconds": [
++    0.002477793,
++    0.0024701832,
++    0.0024148744,
++    0.002475001,
++    0.0024025656,
++    0.0026299132,
++    0.0025810527999999998,
++    0.0025451636,
++    0.0025170018,
++    0.002352851,
++    0.0023839866
++  ],
++  "after_seconds": [
++    0.0004948432,
++    0.0004818424,
++    0.0004821486,
++    0.000493878,
++    0.00048118780000000006,
++    0.0005289310000000001,
++    0.0004918704000000001,
++    0.0004925218,
++    0.000552987,
++    0.0005204952,
++    0.0004833728
++  ],
++  "medians_seconds": [
++    0.002475001,
++    0.0004925218
++  ],
++  "speedup": 5.025160307624962
++}
+diff --git a/evidence/performance-0.3.0/cumulative/matrix-serial.json b/evidence/performance-0.3.0/cumulative/matrix-serial.json
+new file mode 100644
+index 0000000..a00bcfb
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/matrix-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "scores",
++  "after_mode": "matrix",
++  "before_seconds": [
++    0.00022351475,
++    0.0003103435,
++    0.000256465,
++    0.000219697,
++    0.00029163025,
++    0.0002535375,
++    0.00025617025,
++    0.00023395025,
++    0.0002303065,
++    0.000223858,
++    0.00022235325
++  ],
++  "after_seconds": [
++    4.017625e-05,
++    5.14745e-05,
++    4.516025e-05,
++    6.077125e-05,
++    6.350525e-05,
++    6.4578e-05,
++    5.634175e-05,
++    4.412975e-05,
++    4.260725e-05,
++    4.093175e-05,
++    4.05535e-05
++  ],
++  "medians_seconds": [
++    0.00023395025,
++    4.516025e-05
++  ],
++  "speedup": 5.180446299566544
++}
+diff --git a/evidence/performance-0.3.0/cumulative/one.json b/evidence/performance-0.3.0/cumulative/one.json
+new file mode 100644
+index 0000000..5283375
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/one.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "one",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    5.012225e-06,
++    5.03115e-06,
++    7.354775e-06,
++    4.694075e-06,
++    6.621425000000001e-06,
++    5.19375e-06,
++    5.7648249999999995e-06,
++    5.03895e-06,
++    5.160525e-06,
++    5.0004e-06,
++    8.65145e-06
++  ],
++  "after_seconds": [
++    3.237275e-06,
++    3.64195e-06,
++    3.4365e-06,
++    3.320125e-06,
++    3.760125e-06,
++    3.7778000000000005e-06,
++    2.8799250000000002e-06,
++    3.3269499999999995e-06,
++    3.138375e-06,
++    3.0623000000000003e-06,
++    3.2255000000000003e-06
++  ],
++  "medians_seconds": [
++    5.160525e-06,
++    3.320125e-06
++  ],
++  "speedup": 1.5543164790482287
++}
+diff --git a/evidence/performance-0.3.0/cumulative/parallel.json b/evidence/performance-0.3.0/cumulative/parallel.json
+new file mode 100644
+index 0000000..68e19ac
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/parallel.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "parallel",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0007290055,
++    0.000588373,
++    0.00054461775,
++    0.00061063,
++    0.00068903,
++    0.00061696175,
++    0.00058794,
++    0.00068210225,
++    0.0005421655,
++    0.0006316665,
++    0.00047565875
++  ],
++  "after_seconds": [
++    0.00024688625,
++    0.00029532925,
++    0.0001903455,
++    0.00017463425,
++    0.000156763,
++    0.000193894,
++    0.000178987,
++    0.00017331375,
++    0.00017632575,
++    0.000192936,
++    0.00014447975
++  ],
++  "medians_seconds": [
++    0.00061063,
++    0.000178987
++  ],
++  "speedup": 3.411588551123825
++}
+diff --git a/evidence/performance-0.3.0/cumulative/serial.json b/evidence/performance-0.3.0/cumulative/serial.json
+new file mode 100644
+index 0000000..f60c7b8
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.00044584775,
++    0.00050751625,
++    0.00048199575,
++    0.00048600675,
++    0.00043968325,
++    0.0004922235,
++    0.00055582275,
++    0.00047971225,
++    0.00047325025,
++    0.000451393,
++    0.000484378
++  ],
++  "after_seconds": [
++    0.00016919825,
++    0.00021488075,
++    0.00015899425,
++    0.00016307475,
++    0.0001371825,
++    0.0001521,
++    0.00015048275,
++    0.0001654455,
++    0.00015158,
++    0.0001936245,
++    0.00017663725
++  ],
++  "medians_seconds": [
++    0.00048199575,
++    0.00016307475
++  ],
++  "speedup": 2.955673701783998
++}
+diff --git a/evidence/performance-0.3.0/cumulative/trace.json b/evidence/performance-0.3.0/cumulative/trace.json
+new file mode 100644
+index 0000000..8e86e0b
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/trace.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "trace",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0016896238333333332,
++    0.0017727376666666665,
++    0.0017138371666666668,
++    0.0018629328333333332,
++    0.0018228445,
++    0.0017259954999999999,
++    0.0016602149999999998,
++    0.002533399333333333,
++    0.001494708,
++    0.0015094981666666665,
++    0.0014494843333333334
++  ],
++  "after_seconds": [
++    0.0002805001666666667,
++    0.0009299726666666667,
++    0.0003344756666666667,
++    0.0004011375,
++    0.0003302418333333333,
++    0.00039914133333333337,
++    0.0002917868333333333,
++    0.00038149783333333334,
++    0.0002861856666666667,
++    0.00026855566666666666,
++    0.00031015633333333334
++  ],
++  "medians_seconds": [
++    0.0017138371666666668,
++    0.0003302418333333333
++  ],
++  "speedup": 5.189642842543167
++}
+diff --git a/evidence/performance-0.3.0/worker-scaling.json b/evidence/performance-0.3.0/worker-scaling.json
+new file mode 100644
+index 0000000..35136de
+--- /dev/null
++++ b/evidence/performance-0.3.0/worker-scaling.json
+@@ -0,0 +1,329 @@
++{
++  "cpus": 2,
++  "rows": [
++    {
++      "workload": "parallel",
++      "api": "full",
++      "samples_seconds": {
++        "1": [
++          0.000149843,
++          0.000164055,
++          0.000137785,
++          0.0001430265,
++          0.00014871375,
++          0.00020633675,
++          0.00022513275
++        ],
++        "2": [
++          0.000204639,
++          0.00017814925,
++          0.0001960765,
++          0.000182142,
++          0.00017677125,
++          0.0001658105,
++          0.00017828675
++        ],
++        "3": [
++          0.00022196125,
++          0.000173286,
++          0.000184576,
++          0.000189764,
++          0.00016303925,
++          0.000173973,
++          0.00016937775
++        ],
++        "4": [
++          0.000260075,
++          0.000175339,
++          0.00017601475,
++          0.000183449,
++          0.000161075,
++          0.0001858195,
++          0.00022867625
++        ]
++      },
++      "median_seconds": {
++        "1": 0.000149843,
++        "2": 0.00017828675,
++        "3": 0.000173973,
++        "4": 0.000183449
++      },
++      "speedup_vs_1": {
++        "1": 1.0,
++        "2": 0.8404606623879789,
++        "3": 0.8613003167158122,
++        "4": 0.8168101216141817
++      }
++    },
++    {
++      "workload": "parallel",
++      "api": "matrix",
++      "samples_seconds": {
++        "1": [
++          4.06995e-05,
++          5.8202e-05,
++          6.141925e-05,
++          5.2302e-05,
++          4.192075e-05,
++          4.2193e-05,
++          4.125425e-05
++        ],
++        "2": [
++          5.74905e-05,
++          6.678225e-05,
++          8.289825e-05,
++          7.286125e-05,
++          6.1567e-05,
++          5.01415e-05,
++          6.719275e-05
++        ],
++        "3": [
++          5.004875e-05,
++          5.145625e-05,
++          7.95815e-05,
++          7.044975e-05,
++          8.6477e-05,
++          7.35705e-05,
++          0.0002404825
++        ],
++        "4": [
++          9.781875e-05,
++          4.405675e-05,
++          7.049925e-05,
++          8.9728e-05,
++          6.479925e-05,
++          6.720625e-05,
++          6.867325e-05
++        ]
++      },
++      "median_seconds": {
++        "1": 4.2193e-05,
++        "2": 6.678225e-05,
++        "3": 7.35705e-05,
++        "4": 6.867325e-05
++      },
++      "speedup_vs_1": {
++        "1": 1.0,
++        "2": 0.6317996174133097,
++        "3": 0.5735043257827527,
++        "4": 0.6144022599775022
++      }
++    },
++    {
++      "workload": "domain",
++      "api": "full",
++      "samples_seconds": {
++        "1": [
++          0.0008675031999999999,
++          0.0007810108,
++          0.0013369561999999999,
++          0.0007640562,
++          0.000804373,
++          0.0007768134,
++          0.0007976692
++        ],
++        "2": [
++          0.0005707384,
++          0.0006342096,
++          0.000459587,
++          0.0014194896000000001,
++          0.0005439209999999999,
++          0.0007177348,
++          0.0006234496
++        ],
++        "3": [
++          0.0006399832000000001,
++          0.0006093342,
++          0.0005495572,
++          0.0006522676,
++          0.0005975988,
++          0.000645851,
++          0.0005990262
++        ],
++        "4": [
++          0.000626497,
++          0.0007279350000000001,
++          0.0005510313999999999,
++          0.000650668,
++          0.0006488022,
++          0.0006868288000000001,
++          0.0006916936
++        ]
++      },
++      "median_seconds": {
++        "1": 0.0007976692,
++        "2": 0.0006234496,
++        "3": 0.0006093342,
++        "4": 0.000650668
++      },
++      "speedup_vs_1": {
++        "1": 1.0,
++        "2": 1.279444561356684,
++        "3": 1.309083258415497,
++        "4": 1.2259235124518189
++      }
++    },
++    {
++      "workload": "domain",
++      "api": "matrix",
++      "samples_seconds": {
++        "1": [
++          0.000790107,
++          0.0005922478,
++          0.00046339119999999997,
++          0.000492503,
++          0.0005621082,
++          0.0004810638,
++          0.0004967724
++        ],
++        "2": [
++          0.00029326199999999997,
++          0.0003574954,
++          0.00031293499999999997,
++          0.000361506,
++          0.00030116180000000004,
++          0.0002936186,
++          0.0002937626
++        ],
++        "3": [
++          0.0002847984,
++          0.000292152,
++          0.0002764852,
++          0.0002956362,
++          0.0003615938,
++          0.0003154668,
++          0.0003503016
++        ],
++        "4": [
++          0.0002951768,
++          0.000322595,
++          0.000289774,
++          0.0003473936,
++          0.00031886459999999996,
++          0.0003197868,
++          0.0005066954000000001
++        ]
++      },
++      "median_seconds": {
++        "1": 0.0004967724,
++        "2": 0.00030116180000000004,
++        "3": 0.0002956362,
++        "4": 0.0003197868
++      },
++      "speedup_vs_1": {
++        "1": 1.0,
++        "2": 1.6495199590386294,
++        "3": 1.680350376577699,
++        "4": 1.55344873521984
++      }
++    },
++    {
++      "workload": "domain2",
++      "api": "full",
++      "samples_seconds": {
++        "1": [
++          0.0009726006000000001,
++          0.0007796598,
++          0.000789411,
++          0.0010069430000000002,
++          0.0008239364000000001,
++          0.0018823928,
++          0.0007946498
++        ],
++        "2": [
++          0.0005628848,
++          0.0007312286,
++          0.0005513344,
++          0.0007052744,
++          0.0006813452,
++          0.0006133922,
++          0.0005599932
++        ],
++        "3": [
++          0.0006688493999999999,
++          0.0005519279999999999,
++          0.0006594464000000001,
++          0.0005740745999999999,
++          0.0006045628,
++          0.0005975602,
++          0.0006619024
++        ],
++        "4": [
++          0.0006362068,
++          0.0007361846,
++          0.0006065937999999999,
++          0.000731934,
++          0.00066011,
++          0.0006875678,
++          0.000688611
++        ]
++      },
++      "median_seconds": {
++        "1": 0.0008239364000000001,
++        "2": 0.0006133922,
++        "3": 0.0006045628,
++        "4": 0.0006875678
++      },
++      "speedup_vs_1": {
++        "1": 1.0,
++        "2": 1.3432456428366712,
++        "3": 1.362863212887065,
++        "4": 1.1983347678585299
++      }
++    },
++    {
++      "workload": "domain2",
++      "api": "matrix",
++      "samples_seconds": {
++        "1": [
++          0.000614929,
++          0.0003912278,
++          0.0003759288,
++          0.0004811342,
++          0.0005119984,
++          0.0004699468,
++          0.0006056182
++        ],
++        "2": [
++          0.0004060048,
++          0.0004963538,
++          0.0002620888,
++          0.0002700032,
++          0.0003558508,
++          0.0002703448,
++          0.000417051
++        ],
++        "3": [
++          0.0006491417999999999,
++          0.0002776168,
++          0.0003890746,
++          0.000345723,
++          0.00028051,
++          0.0003747984,
++          0.0002691218
++        ],
++        "4": [
++          0.00037547000000000004,
++          0.0003227476,
++          0.0003431208,
++          0.00039335000000000005,
++          0.0003395694,
++          0.00027523339999999997,
++          0.0003329316
++        ]
++      },
++      "median_seconds": {
++        "1": 0.0004811342,
++        "2": 0.0003558508,
++        "3": 0.000345723,
++        "4": 0.0003395694
++      },
++      "speedup_vs_1": {
++        "1": 1.0,
++        "2": 1.3520672146866046,
++        "3": 1.3916754164461145,
++        "4": 1.4168950441353079
++      }
++    }
++  ]
++}
+diff --git a/examples/breakdown.rs b/examples/breakdown.rs
+index 78ba21d..e26080d 100644
+--- a/examples/breakdown.rs
++++ b/examples/breakdown.rs
+@@ -7,12 +7,14 @@ use std::{hint::black_box, time::Instant};
+ 
+ /// Build the same models and candidates as `examples/performance.rs`.
+ fn workload(example: &Value, mode: &str) -> (Value, Vec<Value>, usize) {
++    let traced = mode == "trace";
+     let mut model = example["model"].clone();
+     let mut parameters = example["parameters"].clone();
+     let (count, workers) = match mode {
+         "one" => (1, 1),
+         "serial" => (96, 1),
+         "parallel" => (96, 4),
++        "trace" => (12, 1),
+         "invalid" => (1024, 1),
+         "domain" => {
+             let year = model["forcing"].as_array().unwrap().clone();
+@@ -45,7 +47,7 @@ fn workload(example: &Value, mode: &str) -> (Value, Vec<Value>, usize) {
+             } else if let Some(first) = values.as_array_mut().unwrap().first_mut() {
+                 *first = json!(first.as_f64().unwrap() * (1.0 + (i % 13) as f64 * 0.003));
+             }
+-            json!({"id": format!("candidate-{i:04}"), "parameters": values})
++            json!({"id": format!("candidate-{i:04}"), "parameters": values, "trace": traced})
+         })
+         .collect();
+     (model, candidates, workers)
+@@ -61,7 +63,9 @@ fn main() {
+     let example: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+     let repeats = 201;
+     let mut rows = Vec::new();
+-    for mode in ["one", "serial", "parallel", "invalid", "domain", "domain2"] {
++    for mode in [
++        "one", "serial", "parallel", "trace", "invalid", "domain", "domain2",
++    ] {
+         let (model, candidates, workers) = workload(&example, mode);
+         let prepared = Prepared::new(&model.to_string()).unwrap();
+         let budget = json!({"workers": workers}).to_string();
+@@ -71,7 +75,12 @@ fn main() {
+             .flat_map(|c| c["parameters"].as_array().unwrap().clone())
+             .map(|v| v.as_f64().unwrap())
+             .collect();
+-        for api in ["full", "lean", "matrix"] {
++        let apis: &[&str] = if mode == "trace" {
++            &["full"]
++        } else {
++            &["full", "lean", "matrix"]
++        };
++        for &api in apis {
+             let mut phases = [Vec::new(), Vec::new(), Vec::new()];
+             let mut totals = Vec::new();
+             for _ in 0..repeats {
+diff --git a/validation/worker_scaling.py b/validation/worker_scaling.py
+new file mode 100644
+index 0000000..05fc46b
+--- /dev/null
++++ b/validation/worker_scaling.py
+@@ -0,0 +1,44 @@
++"""Time one benchmark binary at several worker counts (CRAFT_WORKERS)."""
++
++import argparse
++import json
++import os
++import statistics
++import subprocess
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("binary", help="compiled examples/performance.rs")
++    parser.add_argument("fixture")
++    parser.add_argument("--workloads", default="parallel,domain,domain2")
++    parser.add_argument("--workers", default="1,2,4")
++    parser.add_argument("--apis", default="full,matrix")
++    parser.add_argument("--samples", type=int, default=7)
++    args = parser.parse_args()
++    workers = [int(w) for w in args.workers.split(",")]
++    rows = []
++    for workload in args.workloads.split(","):
++        for api in args.apis.split(","):
++            samples = {w: [] for w in workers}
++            for i in range(args.samples):
++                # Alternate the order so drift affects every worker count alike.
++                for w in workers if i % 2 == 0 else workers[::-1]:
++                    env = {k: v for k, v in os.environ.items()
++                           if k not in ("CRAFT_SCORES", "CRAFT_MATRIX")}
++                    env["CRAFT_WORKERS"] = str(w)
++                    if api == "lean":
++                        env["CRAFT_SCORES"] = "1"
++                    elif api == "matrix":
++                        env["CRAFT_MATRIX"] = "1"
++                    out = subprocess.check_output([args.binary, args.fixture, workload], env=env)
++                    samples[w].append(float(out))
++            medians = {w: statistics.median(s) for w, s in samples.items()}
++            rows.append({"workload": workload, "api": api, "samples_seconds": samples,
++                         "median_seconds": medians,
++                         "speedup_vs_1": {w: medians[workers[0]] / m for w, m in medians.items()}})
++    print(json.dumps({"cpus": os.cpu_count(), "rows": rows}, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.43.0
+

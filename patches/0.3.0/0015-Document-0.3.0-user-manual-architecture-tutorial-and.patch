@@ -1,0 +1,2485 @@
+From 49839283b137b50ae1439547d9124e9ec069f3a8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:30:17 -0400
+Subject: [PATCH 15/18] Document 0.3.0: user manual, architecture, tutorial and
+ README
+
+Add docs/user-manual.md: installation, concepts, the complete model,
+candidate, budget and result reference from the code, statuses and
+error messages, the Python, Rust and CLI APIs, a scenario cookbook,
+optimization with penalties, campaigns, reproducibility, performance
+tips and troubleshooting. Its 17 Python blocks run against the
+installed wheel and their outputs, like the shell outputs, are copied
+from actual runs; release_checks.py now executes them after the
+tutorial's blocks.
+
+Review docs/architecture.md against the 0.3.0 code: the matrix API,
+grouping and lane kernels, the persistent pool, typed metrics and
+decoding, and a Performance section with the 0.2.0-to-0.3.0 table, the
+phase breakdown, per-call costs from Python, worker scaling, installed
+Python optimization timings and API guidance, all citing evidence.
+Update README.md and docs/tutorial.md for the matrix API and benchmark
+flags, use American spelling in the model card, and add
+validation/python_call_costs.py with its 0.2.0 and 0.3.0 evidence and
+the installed optimization runs.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ README.md                                     |  52 +-
+ docs/architecture.md                          | 388 ++++++--
+ docs/model.md                                 |   6 +-
+ docs/tutorial.md                              |  51 +-
+ docs/user-manual.md                           | 885 ++++++++++++++++++
+ .../performance-0.3.0/optimization/runs.json  | 773 +++++++++++++++
+ .../python-call-costs-v020.json               |  10 +
+ .../python-call-costs-v030.json               |  12 +
+ validation/python_call_costs.py               |  49 +
+ validation/release_checks.py                  |  29 +-
+ 10 files changed, 2140 insertions(+), 115 deletions(-)
+ create mode 100644 docs/user-manual.md
+ create mode 100644 evidence/performance-0.3.0/optimization/runs.json
+ create mode 100644 evidence/performance-0.3.0/python-call-costs-v020.json
+ create mode 100644 evidence/performance-0.3.0/python-call-costs-v030.json
+ create mode 100644 validation/python_call_costs.py
+
+diff --git a/README.md b/README.md
+index e86c488..2700c6d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,17 +1,24 @@
+-# hydro-craft 0.2.0
++# hydro-craft 0.3.0
+ 
+-A bounded research evaluator. See the [model card](docs/model.md) for units,
+-equations and supported behavior. The accompanying implementation log
+-records which milestones ran and which use a bounded fallback.
+-See the [tutorial](docs/tutorial.md) and [architecture](docs/architecture.md).
+-The [0.1.0 implementation record](docs/implementation-0.1.0.md) preserves the original scope.
++A bounded research evaluator for a synthetic HBV-style daily catchment and
++a one-reservoir release rule. See the [user manual](docs/user-manual.md)
++for installation, the complete model reference and every API, the
++[model card](docs/model.md) for units, equations and scope, the
++[tutorial](docs/tutorial.md) for a guided tour and the
++[architecture](docs/architecture.md) for the engine and measured
++performance. The [0.3.0 performance log](hydro-craft-performance-log-0.3.0.md)
++records the ten performance rounds; the
++[0.2.0 log](hydro-craft-performance-log-0.2.0.md) and the
++[0.1.0 implementation record](docs/implementation-0.1.0.md) preserve the
++earlier releases.
+ 
+-## Rust CLI and native example
++## Rust CLI and native examples
+ 
+ ```sh
+ cargo run --release --locked -- describe
+ cargo run --release --locked -- run models/request.json
+ cargo run --release --locked --example sweep -- models/example.json
++cargo run --release --locked --example matrix
+ ```
+ 
+ The CLI uses versioned JSON with exact model-byte SHA-256, candidate IDs and
+@@ -33,16 +40,25 @@ prepared = Prepared(case["model"])
+ row = prepared.evaluate(case["parameters"], trace=True)
+ assert row["status"] == "complete"
+ print(row["score"])
++scores, statuses, steps = prepared.score_matrix([case["parameters"]] * 4)
++print(scores, statuses, steps)
+ ```
+ 
+-`Prepared.batch` crosses into native code once per batch. A set of scoped
+-workers evaluates candidates in isolation and returns records in input order.
+-The local Python campaign commits results to SQLite, preserves interrupted
+-attempts and reuses completed records by candidate, scenario, settings and
+-build identity. Fixed-work replay is scoped to the tested build.
+-Run `validation/run_campaign.py MODULE models/campaign.json campaign.sqlite`
++`Prepared.batch` returns full records and `Prepared.scores` records with
++null metrics, each with one native crossing per batch. `Prepared.score_matrix`
++takes a list of parameter rows or a 2-D NumPy array and returns scores,
++statuses and steps with no JSON in either direction; use it inside
++optimizers. Untraced candidates are simulated in interleaved groups and
++records always return in input order. The local Python campaign commits
++results to SQLite, preserves interrupted attempts and reuses completed
++records by candidate, scenario, settings and build identity. Run
++`validation/run_campaign.py MODULE models/campaign.json campaign.sqlite`
+ with the installed package to evaluate or resume the included manifest.
+ 
++[`examples/python/`](examples/python/README.md) has application examples
++(sensitivity, warming scenarios, a reservoir policy study) and
++optimization examples with SciPy and fcmaes, each with saved output.
++
+ ## Verify and rebuild
+ 
+ ```sh
+@@ -53,7 +69,9 @@ maturin sdist --out dist
+ maturin build --release --locked --out dist
+ ```
+ 
+-Independent numerical scripts use Python 3.12. The oscillator and population
+-oracles use NumPy 2.3.5 and SciPy 1.17.0. The optional
+-`validation/optimize.py hydro_craft` demonstrates an in-process SciPy DE objective.
+-The native sweep needs only the Rust crate. See `evidence/` for actual runs.
++Independent numerical scripts use Python 3.12. The optional
++`validation/optimize.py hydro_craft` demonstrates an in-process SciPy DE
++objective, and `validation/optimize_performance.py` times it in full,
++`--scores` and `--matrix` modes. The native sweep needs only the Rust
++crate. See `evidence/` for actual runs and `patches/` for the patch
++series of each release (`patches/0.2.0/`, `patches/0.3.0/`).
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 890489c..d396a84 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,100 +1,336 @@
+ # Hydro Craft architecture
+ 
+-Version 0.2.0. Calibrate a synthetic HBV-style daily catchment and compare non-anticipatory policies for one reservoir.
++Version 0.3.0. Calibrate a synthetic HBV-style daily catchment and compare
++non-anticipatory policies for one reservoir. This document describes the
++engine as built and reports measured performance. The
++[user manual](user-manual.md) is the reference for using it.
+ 
+ ## Evaluation pipeline
+ 
+ ```mermaid
+ flowchart TD
+-    P["Prepared model"] --> B["Candidate batch"]
+-    B --> V["Validate IDs and budgets"]
+-    V -->|Single worker or candidate| S["Inline evaluation"]
+-    V -->|Multiple workers| W["Scoped worker evaluation"]
+-    S --> D["Domain kernel and work counter"]
+-    W --> D
+-    D --> R["Ordered typed result"]
+-    R -->|Full| F["Metrics and optional trace"]
+-    R -->|Lean| L["Score and status"]
++    P["Prepared model (validated once, model_sha256)"] --> J["JSON candidates: borrowed IDs, exact-size parameters"]
++    P --> M["score_matrix: row-major f64 rows, no JSON"]
++    J --> V["Validate budget, batch size, IDs, traces"]
++    M --> V2["Validate rows, dimension, budget"]
++    V --> G["Plan groups"]
++    V2 --> G
++    G -->|"unmonitored budget, max_steps >= days"| L["Interleaved lane kernels (catchment 8/4/2/1, reservoir 16/8/4/1)"]
++    G -->|"deadline, cancel file, tight max_steps or trace"| S["Single candidate with guarded work counter"]
++    L --> D["Inline or persistent pool workers; one slot per group"]
++    S --> D
++    D --> R["Ordered results"]
++    R -->|batch| F["Typed full records: metrics, optional trace"]
++    R -->|scores| E["Records with null metrics"]
++    R -->|score_matrix| X["MatrixScore: status, steps, score"]
+ ```
+ 
+ | Boundary | Location | Responsibility |
+ | --- | --- | --- |
+-| Request and CLI | `src/main.rs`, `src/lib.rs`, `models/request.json` | Versioned request schema, exact model-byte hash, typed validation, JSON output and exit code |
+-| Python boundary | `python/hydro_craft/__init__.py`, PyO3 in `src/lib.rs` | Encode once per batch, release the Python GIL during native evaluation, decode the typed result envelope |
+-| Prepared engine | `src/lib.rs` | Own immutable domain data, enforce batch rules, dispatch candidates and retain ordered result rows |
+-| Domain | `src/domain.rs` | Bind the candidate, execute model logic, classify status and compute a minimization objective |
++| Request and CLI | `src/main.rs`, `src/lib.rs` (`run`, `capabilities`), `models/request.json` | Versioned request schema, exact model-byte hash, typed validation, sorted-key JSON output and exit code |
++| Python boundary | `python/hydro_craft/__init__.py`, PyO3 module in `src/lib.rs` | `batch` and `scores` encode once per batch and decode one result; `score_matrix` passes lists of floats and returns three lists. The GIL is released during native evaluation |
++| Prepared engine | `src/lib.rs` | Own the immutable model, enforce batch rules, plan groups, dispatch them and assemble ordered records or matrix scores |
++| Worker pool | `src/pool.rs` | Persistent helper threads shared by all batches of a process |
++| Domain | `src/domain.rs` | Validate models and parameters, run scalar and interleaved kernels, classify status, compute the objective and typed metrics |
+ | Campaign | `python/hydro_craft/campaign.py` | Local SQLite replay, attempt journal and complete-result caching |
+-| Verification | `validation/`, `examples/`, `evidence/` | Independent checks, executable examples and paired performance observations |
++| Verification | `validation/`, `examples/`, `evidence/` | Independent checks, paired performance comparisons, executable examples and raw measurements |
+ 
+ ## Data and execution contracts
+ 
+ `Prepared::new` hashes the model bytes, deserializes the model and
+-validates its bounds before building domain caches. The Python
+-wrapper encodes models with sorted keys and finite JSON numbers.
+-Two inputs that differ in their serialized representation can
+-have different provenance hashes. Result and request schema tags
+-remain at 0.1. Package version is reported separately.
+-
+-Every batch validates candidate count (1–4096), unique IDs, parameter
+-vector length (up to 64), requested workers (1–64) and trace count
+-(up to 16). Parallel workers claim indexes through an atomic cursor.
+-Each assigned index owns a result slot written once. After workers
+-join, output is serialized in input order. Single-worker or singleton
+-calls run inline. The typed prepared envelope borrows candidate IDs
+-until serialization completes. The CLI retains its full `Value` API.
+-
+-`Work` counts domain-defined steps per candidate. Its fast branch
+-handles unmonitored steps below the limit. Monitored steps check
+-the cancel file, then batch deadline, then work budget. Domain
+-checks can still reject an invalid candidate before it takes a step.
+-Cancellation and deadlines are cooperative. The wall clock can
+-change which candidates finish, while fixed-work replays should agree
+-independent of worker count. Candidate parallelism creates scoped
+-threads per batch. Concurrent callers should account for total
+-worker demand when choosing batch settings.
+-
+-Full records contain domain metrics and any requested trace.
+-`scores_json` in Rust and `Prepared.scores` in Python return the
+-same record keys with null metrics and reject traced candidates.
+-Both retain per-candidate limits, diagnostics needed for feasibility,
+-numeric score checks and failure status. Full replay restores
+-inspection details for the selected candidate.
++validates its bounds; preparation also tags every catchment day with its
++fold. The Python wrapper encodes models with sorted keys and finite JSON
++numbers. Two inputs that differ in their serialized representation can
++have different provenance hashes. Result and request schema tags remain at
++0.1; the package version is reported separately. The matrix API is not
++part of the JSON schema.
++
++Every JSON batch validates the budget (workers 1-64, `max_steps`
++1-100,000,000, `wall_ms` 1-86,400,000), the candidate count (1-4,096),
++unique IDs of 1-128 bytes, parameter vectors of at most 64 values and at
++most 16 traced candidates. Candidate IDs are borrowed from the request
++text unless the JSON string has escapes, and each parameter array is read
++into a 64-value stack buffer and copied once into an exactly sized vector.
++Error messages are those of the plain serde derive used before.
++
++`score_matrix(rows, parameters, budget)` takes row-major parameters with
++`parameters.len() / rows` values per row (dimension 0 allowed) and
++rejects rows outside 1-4,096, a length that is not a multiple of `rows`,
++a dimension above 64 and an invalid budget. Rows have no IDs and need no
++duplicate check. Every row reports the same status, steps and
++bit-identical score as `scores_json` for the same parameters; unit tests
++check this for invalid rows, `max_steps` limits, a cancel file, deadlines
++and several workers. The PyO3 method takes `Vec<Vec<f64>>`, rejects
++ragged rows and returns scores with NaN for every row that is not
++complete.
++
++`Work` counts one logical step per simulated day. When no deadline or
++cancel file is monitored and `max_steps` covers every day, no candidate
++can stop early: each one either fails validation before its first step or
++simulates all days. Only then does the engine group untraced candidates
++for the interleaved kernels and charge each valid one the full day count
++in bulk. Otherwise every candidate runs alone through `Work::step`, whose
++fast branch handles unmonitored steps below the limit and whose guarded
++branch checks the cancel file, then the deadline, then the step budget.
++Cancellation and deadlines are cooperative; fixed-work results are
++independent of worker count and grouping.
++
++Dispatch splits the batch into consecutive groups (8 catchment or 16
++reservoir candidates for the lane path, 1 otherwise). One worker, or a
++single group, runs inline. Otherwise the calling thread and up to
++`workers - 1` helpers from a process-wide pool claim groups through an
++atomic cursor; each group owns one result slot, written once, and results
++are flattened in input order. Pool helpers are created on demand (at most
++63), wait on a condition variable between batches and are shared by
++concurrent batches; the calling thread always works on its own batch, so
++a batch progresses even when every helper is busy. A panic in any
++participant is propagated to the caller after all participants have
++left the batch. A forked child process starts a fresh pool.
++
++Full records serialize typed metrics structs whose fields are declared in
++sorted key order, so the JSON text equals the sorted `serde_json::Value`
++maps of earlier releases; the CLI converts the typed batch to a `Value`.
++`scores_json` in Rust and `Prepared.scores` in Python return the same
++record keys with null metrics and reject traced candidates. All result
++levels keep per-candidate limits, the diagnostics needed for feasibility,
++the finite-score check and the failure status.
+ 
+ ## Domain internals
+ 
+-| Model | Input fixed at preparation | Candidate-local computation |
++| Model | Fixed at preparation | Candidate-local computation |
+ | --- | --- | --- |
+-| Catchment | Area, daily forcing, observations and day-to-fold tags | Snow accumulation/melt, soil recharge, evapotranspiration, fast and slow stores, runoff and train RMSE |
+-| Reservoir | Capacity, reserve, outlet and daily inputs | Prior-storage policy, physical withdrawals and releases, spill, shortage and objective |
+-
+-The catchment recurrence updates each store in daily order, with
+-separate precipitation and observed flow masks. Preparation validates
+-the contiguous day grid and observations in every scored fold, then
+-writes compact fold tags into days. Dry recharge avoids a power
+-call. Exponents exactly 1 and 2 use direct arithmetic. Other values
+-use the general power function. The reservoir binds target storage
+-once and applies the same release ordering for every candidate.
+-
+-Lean catchment scores skip validation/test accumulation and balance
+-reporting. Lean reservoir scores skip shortage streak and diagnostic
+-balance. Both paths simulate all days and enforce the same input,
+-work and cancellation rules. Daily water balance is a full-output
+-diagnostic and is independently validated. Both modes carry warm-up stores into the scored days. See the [model card](model.md) for
+-units and the limited synthetic calibration scope.
++| Catchment | Area, daily forcing, observations and a fold tag per day | Snow accumulation and melt, soil recharge, evapotranspiration, upper and lower stores, runoff, fold scores and the daily balance |
++| Reservoir | Capacity, reserve, outlet and daily inputs | Prior-storage release rule, evaporation, delivery, release, spill, shortage statistics and the daily balance |
++
++Each model has one set of step functions shared by the scalar path and the
++lane kernels, so every candidate performs the same floating-point
++operations in the same order on either path and results are bit-identical.
++The catchment day is composed of `day_start` (store total for the
++balance), `freeze` or `thaw` (snow and recharge) and `day_finish`
++(overflow, evapotranspiration, percolation, recession and the balance),
++followed by `score_day`. The reservoir day is one `reservoir_day`.
++
++The lane kernels advance `L` independent candidates day by day over the
++shared inputs. Their update chains do not depend on each other, so the
++processor overlaps them; a single catchment or reservoir candidate is a
++latency-bound recurrence of about 19-21 ns per day on the test host. The
++catchment kernel takes the frozen or thawed branch once per day for the
++whole group. Candidates are partitioned by recharge exponent: exactly 1
++or 2 use a branch-free thawed step that computes recharge and selects
++zero on days without liquid water (the value the scalar path produces by
++skipping the computation) and run up to eight lanes; other exponents keep
++the per-lane check that skips the power call and run up to four lanes.
++Lean reservoir groups run up to sixteen lanes and full ones up to eight,
++because the shortage-streak and balance state of full records did not
++benefit from wider groups. Shortage streaks are counted branch-free.
++
++Lean catchment scores accumulate only the training fold; lean reservoir
++scores skip shortage streaks and the balance. Both simulate every day and
++apply the same input, work and cancellation rules. The daily water
++balance is a full-record diagnostic and is independently validated. Both
++modes carry warm-up stores into the scored days. Traced candidates always
++use the scalar path and write typed day rows into a vector preallocated
++to the number of days. See the [model card](model.md) for units and the
++limited synthetic calibration scope.
++
++## Structural changes in 0.3.0
++
++| Round | Change |
++| ---: | --- |
++| 1 | Typed score-matrix API in Rust and Python, sharing dispatch with the JSON path |
++| 2 | Persistent worker pool instead of per-batch scoped threads |
++| 3 | Typed full-record metrics instead of `serde_json::Value` maps |
++| 4 | Typed, preallocated trace rows |
++| 5 | Interleaved reservoir lanes behind the shared `reservoir_day` step |
++| 6 | Interleaved catchment lanes behind shared step functions |
++| 7 | Borrowed candidate IDs and exact-size parameter vectors |
++| 8 | Per-day temperature branch for the whole group and exponent-class catchment kernels |
++| 9 | Sixteen lanes for lean reservoir scoring |
++| 10 | Eight lanes for full catchment records of a known exponent class |
++
++A feature-gated hook (`profiling`, `Prepared::profile_json`) and
++`examples/breakdown.rs` time JSON calls by phase. The
++[0.3.0 performance log](../hydro-craft-performance-log-0.3.0.md) lists
++each round's measured effect and the rejected attempt.
+ 
+ ## Persistence and boundaries of evidence
+ 
+ The local campaign hashes the installed extension bytes plus each
+-scenario, model, candidate and work settings to locate reusable
+-records. SQLite stores completed, invalid and infeasible results,
+-and keeps an append-only journal of attempts. Cancelled or time-
+-limited attempts remain in the journal and can be retried. SQLite
+-commits each chunk atomically. A new extension build changes the
+-cache namespace. The current workflow is local and exposes no
+-distributed worker protocol.
+-
+-The package contains source, a source distribution, and a validated
+-Linux x86-64 wheel. The included performance log distinguishes the
+-native prepared boundary, complete Python search and clean build.
+-See the [tutorial](tutorial.md) for exact commands and
+-[the model card](model.md) for equations and research scope.
++scenario, model, candidate and work settings to locate reusable records.
++SQLite stores completed, invalid and infeasible results and keeps an
++append-only journal of attempts. Canceled or time-limited attempts remain
++in the journal and can be retried. SQLite commits each chunk atomically.
++A new extension build changes the cache namespace. The workflow is local
++and exposes no distributed worker protocol.
++
++The package contains source, a source distribution and a validated Linux
++x86-64 wheel. See the [user manual](user-manual.md) and the
++[tutorial](tutorial.md) for commands and [the model card](model.md) for
++equations and research scope.
++
++## Performance
++
++All numbers in this section were measured on one host: 2 vCPUs, Intel(R)
++Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0 and CPython 3.12.3, with
++every timing run inside a lock that kept builds and other timings off the
++CPUs. The 0.2.0 performance log's numbers came from another host (AMD
++EPYC 9V74, 4 CPUs, Rust 1.88) and are not comparable with these. Raw
++data are in [`evidence/performance-0.3.0/`](../evidence/performance-0.3.0/README.md).
++
++### 0.2.0 to 0.3.0
++
++Median milliseconds per prepared call from
++`validation/performance_pair.py --samples 11`, pairing the 0.2.0 baseline
++benchmark binary with the round 10 binary
++([`cumulative/`](../evidence/performance-0.3.0/cumulative/)). Times
++exclude process start-up and model preparation and include JSON decode,
++evaluation and JSON encode (matrix rows: no JSON). The `parallel` workload
++keeps its four requested workers on this 2-vCPU host. Matrix rows compare
++0.2.0 lean scores with 0.3.0 matrix calls, because 0.2.0 has no matrix
++API. Outputs of both binaries are byte-identical for every workload.
++
++| Workload | Case | 0.2.0 ms | 0.3.0 ms | 0.2.0 / 0.3.0 |
++| --- | --- | ---: | ---: | ---: |
++| `one` | Single full record (90 days) | 0.005 | 0.003 | 1.55x |
++| `serial` | 96 full records, one worker | 0.482 | 0.163 | 2.96x |
++| `parallel` | 96 full records, four workers requested | 0.611 | 0.179 | 3.41x |
++| `trace` | 12 traced full records | 1.714 | 0.330 | 5.19x |
++| `invalid` | 1,024 invalid candidates (63 parameters) | 1.410 | 1.259 | 1.12x |
++| `domain` | 48 catchment records, 2,400 days | 2.819 | 0.781 | 3.61x |
++| `domain2` | 48 reservoir records, 2,400 days | 2.490 | 0.804 | 3.10x |
++| lean `serial` | 96 lean scores | 0.224 | 0.084 | 2.66x |
++| lean `domain` | 48 lean catchment scores | 2.488 | 0.511 | 4.87x |
++| lean `domain2` | 48 lean reservoir scores | 2.372 | 0.396 | 5.99x |
++| matrix `serial` | 96 matrix scores (0.2.0: lean) | 0.234 | 0.045 | 5.18x |
++| matrix `domain` | 48 catchment matrix scores (0.2.0: lean) | 2.475 | 0.493 | 5.03x |
++
++### Where a call's time goes
++
++Median microseconds of 201 calls per row from `examples/breakdown.rs`
++([`breakdown.json`](../evidence/performance-0.3.0/breakdown.json)).
++Decode covers candidates and budget; evaluate covers validation,
++dispatch, the domain kernels and record assembly; encode is the result
++JSON. Matrix rows are whole `score_matrix` calls.
++
++| Workload | API | Candidates | Decode us | Evaluate us | Encode us | Total us | Per candidate us |
++| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
++| `one` | full | 1 | 0.3 | 2.1 | 0.7 | 3.1 | 3.09 |
++| `one` | lean | 1 | 0.3 | 2.0 | 0.3 | 2.6 | 2.64 |
++| `one` | matrix | 1 | - | - | - | 2.0 | 1.99 |
++| `serial` | full | 96 | 18.2 | 64.5 | 52.1 | 136.7 | 1.42 |
++| `serial` | lean | 96 | 19.5 | 44.1 | 10.8 | 74.7 | 0.78 |
++| `serial` | matrix | 96 | - | - | - | 39.9 | 0.42 |
++| `parallel` | full | 96 | 26.6 | 69.8 | 54.8 | 152.3 | 1.59 |
++| `parallel` | lean | 96 | 28.5 | 53.9 | 13.7 | 99.3 | 1.03 |
++| `parallel` | matrix | 96 | - | - | - | 45.6 | 0.48 |
++| `trace` | full | 12 | 3.2 | 24.9 | 253.0 | 280.9 | 23.41 |
++| `invalid` | full | 1024 | 963.5 | 106.4 | 122.9 | 1205.3 | 1.18 |
++| `invalid` | lean | 1024 | 994.6 | 112.0 | 128.4 | 1245.9 | 1.22 |
++| `invalid` | matrix | 1024 | - | - | - | 55.0 | 0.05 |
++| `domain` | full | 48 | 12.6 | 783.7 | 30.2 | 826.7 | 17.22 |
++| `domain` | lean | 48 | 15.1 | 547.8 | 9.8 | 571.4 | 11.90 |
++| `domain` | matrix | 48 | - | - | - | 516.4 | 10.76 |
++| `domain2` | full | 48 | 9.1 | 794.0 | 17.9 | 821.0 | 17.10 |
++| `domain2` | lean | 48 | 8.0 | 376.5 | 6.7 | 391.5 | 8.16 |
++| `domain2` | matrix | 48 | - | - | - | 374.9 | 7.81 |
++
++Per simulated candidate-day, the 2,400-day matrix calls cost about
++4.5 ns for the catchment (exponent 1) and 3.3 ns for the reservoir, against
++about 19-21 ns for one candidate alone in 0.2.0. Full records cost more per day:
++about 6.8 ns for the catchment and 6.9 ns for the reservoir.
++
++### Per-call cost from Python
++
++Median microseconds per call through the installed wheels on CPU 0
++(`validation/python_call_costs.py`, 15 rounds of 200 calls,
++[`python-call-costs-v030.json`](../evidence/performance-0.3.0/python-call-costs-v030.json)
++and [`-v020.json`](../evidence/performance-0.3.0/python-call-costs-v020.json)).
++The 90-day packaged example, one worker.
++
++| Call | 0.2.0 us | 0.3.0 us |
++| --- | ---: | ---: |
++| `evaluate(x)` (one full record) | 19.27 | 16.15 |
++| `batch([one])` | 18.22 | 15.51 |
++| `scores([one])` | 11.37 | 10.29 |
++| `score_matrix([x])` | - | 4.45 |
++| `batch(96 candidates)` | 1086.57 | 727.68 |
++| `scores(96 candidates)` | 438.40 | 286.44 |
++| `score_matrix(96 rows)` | - | 52.88 |
++
++From Python, JSON encoding of candidates and decoding of records in the
++wrapper costs more than the native call: a 96-candidate `scores` call
++spends about 75 us natively and about 210 us in Python, while
++`score_matrix` needs about 13 us beyond its native time.
++
++### Worker scaling
++
++Median milliseconds of 7 alternating samples with `CRAFT_WORKERS`
++overriding each workload's worker count
++([`worker-scaling.json`](../evidence/performance-0.3.0/worker-scaling.json)).
++
++| Workload | API | 1 worker ms | 2 workers | 3 workers | 4 workers |
++| --- | --- | ---: | ---: | ---: | ---: |
++| `parallel` | full | 0.150 | 0.178 (0.84x) | 0.174 (0.86x) | 0.183 (0.82x) |
++| `parallel` | matrix | 0.042 | 0.067 (0.63x) | 0.074 (0.57x) | 0.069 (0.61x) |
++| `domain` | full | 0.798 | 0.623 (1.28x) | 0.609 (1.31x) | 0.651 (1.23x) |
++| `domain` | matrix | 0.497 | 0.301 (1.65x) | 0.296 (1.68x) | 0.320 (1.55x) |
++| `domain2` | full | 0.824 | 0.613 (1.34x) | 0.605 (1.36x) | 0.688 (1.20x) |
++| `domain2` | matrix | 0.481 | 0.356 (1.35x) | 0.346 (1.39x) | 0.340 (1.42x) |
++
++Waking pool helpers costs tens of microseconds on this host. The
++96-candidate, 90-day batch now holds less evaluation work than that, so
++extra workers slow it down. The 2,400-day batches gain up to 1.7x on two
++CPUs; the reservoir has only three 16-candidate groups to share. In full
++mode, decode and encode stay on the calling thread.
++
++### Installed Python optimization
++
++`validation/optimize_performance.py`: one seeded SciPy differential
++evolution (168 objective calls, 72 classified failures) plus a traced
++replay of the winner. Seven runs per configuration on one logical CPU
++(`taskset -c 0`), interleaved; each configuration ran in its own fresh
++virtual environment with the installed wheel (0.2.0 from `packages/` of
++the 0.2.0 delivery, 0.3.0 built from its sdist). Columns are medians; the
++total median is computed per run
++([`optimization/runs.json`](../evidence/performance-0.3.0/optimization/runs.json)).
++
++| Configuration | Prepare ms | Search ms | Replay ms | Total ms | Search range ms | v0.2.0-full / total |
++| --- | ---: | ---: | ---: | ---: | ---: | ---: |
++| v0.2.0-full | 0.386 | 11.683 | 0.527 | 12.578 | 10.87-12.13 | 1.00x |
++| v0.2.0-scores | 0.366 | 10.443 | 0.722 | 11.825 | 7.90-17.99 | 1.06x |
++| v0.3.0-full | 0.382 | 11.137 | 0.363 | 11.873 | 10.01-15.30 | 1.06x |
++| v0.3.0-scores | 0.415 | 12.920 | 0.403 | 13.658 | 10.36-16.01 | 0.92x |
++| v0.3.0-matrix | 0.375 | 8.451 | 0.412 | 9.268 | 7.49-9.19 | 1.36x |
++
++Every configuration made 168 evaluations with 72 failures, selected
++`[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]` and replayed score
++4.965068306494546e-16. This search makes one call per candidate, and
++SciPy's own per-candidate work plus the wrapper dominate: about 50-70 us
++per objective call against 2-3 us of native evaluation. Run-to-run spread
++on this virtual machine is larger than the difference between the full
++and scores modes; only the matrix mode is clearly faster.
++
++### What dominates now and which API to use
++
++- **Optimizers:** call `score_matrix` with a whole population. It avoids
++  JSON in both directions (from Python, 5x cheaper than `scores` and 14x
++  cheaper than `batch` for 96 candidates) and fills the interleaved
++  kernels. A vectorized
++  objective (SciPy `vectorized=True`, fcmaes ask/tell) is better than one
++  call per candidate.
++- **Inspection:** use `batch` or `evaluate` for the few candidates whose
++  metrics you need, and traces only for the candidates you plot. Traced
++  calls are dominated by JSON encoding of the daily rows (90% of the
++  `trace` workload).
++- **Native time:** for long models the domain kernels dominate
++  (95% of the 2,400-day calls). For short models and large batches of
++  JSON candidates, decoding dominates (80% of `invalid`; 13-26% of
++  `serial`).
++- **Workers:** on this host helpers slowed down the 8,640
++  candidate-day `parallel` batch and sped up the 115,200 candidate-day
++  batches by 1.2-1.7x. Keep `workers=1` for small batches, try two to
++  the number of CPUs for large ones and measure; four workers on two
++  CPUs gave no consistent gain over two.
++- **Budgets:** `wall_ms`, `cancel_file` and a `max_steps` below the day
++  count disable the interleaved kernels. Prefer an unmonitored budget for
++  production searches and reserve deadlines for interactive use.
+diff --git a/docs/model.md b/docs/model.md
+index 042c87b..68fc454 100644
+--- a/docs/model.md
++++ b/docs/model.md
+@@ -6,8 +6,8 @@ comparison must match its update order, initial stores and parameter map.
+ 
+ Forcing is one row per consecutive day. Precipitation, potential
+ evapotranspiration and observations are depth in mm per day, temperature
+-is in degrees Celsius and area is in square kilometres. A missing
+-observation is JSON null. Discharge in cubic metres per second is
++is in degrees Celsius and area is in square kilometers. A missing
++observation is JSON null. Discharge in cubic meters per second is
+ runoff depth times area times 1,000 divided by 86,400.
+ 
+ The parameter vector is soil capacity, recharge exponent, evaporation
+@@ -21,7 +21,7 @@ runoff. The per-step balance is exposed. Warm-up forcing is simulated
+ before scoring. Training RMSE is the objective, and validation and test
+ metrics remain separate.
+ 
+-The reservoir runs in cubic metres with one record per day. The rule
++The reservoir runs in cubic meters with one record per day. The rule
+ decides discretionary release from previous storage. Realized inflow,
+ evaporation, demand withdrawal, discretionary release and spill are
+ applied in that order. Available outlet capacity and reserve constrain
+diff --git a/docs/tutorial.md b/docs/tutorial.md
+index 2294884..36b00cf 100644
+--- a/docs/tutorial.md
++++ b/docs/tutorial.md
+@@ -1,6 +1,7 @@
+ # Hydro Craft tutorial
+ 
+-Calibrate a synthetic HBV-style daily catchment and compare non-anticipatory policies for one reservoir. This guide uses the examples shipped with version 0.2.0.
++Calibrate a synthetic HBV-style daily catchment and compare non-anticipatory policies for one reservoir. This guide uses the examples shipped with version 0.3.0. The
++[user manual](user-manual.md) is the complete reference.
+ 
+ ## 1. Install and run the example
+ 
+@@ -15,7 +16,7 @@ python -m pip install --no-deps packages/*.whl
+ ```
+ 
+ If the wheel tag is incompatible, build the supplied Rust/Python source
+-on the target system with Rust 1.88+ and Maturin 1.9.6. Cargo needs the
++on the target system with Rust 1.88+ and maturin 1.9.6. Cargo needs the
+ locked dependencies available from its registry or cache.
+ 
+ ```sh
+@@ -112,18 +113,38 @@ It rejects any candidate with `trace: true`. A one-worker batch or a
+ singleton runs inline. Larger batches can try two or four workers.
+ Measure before setting a worker count for a real workload.
+ 
++Inside an optimizer, score whole populations without JSON. `score_matrix`
++takes a list of equal-length parameter rows or a 2-D NumPy array and
++returns three lists; scores are NaN for every row that is not complete.
++
++```python
++rows = [case["parameters"], [1.0, 2.0], case["parameters"]]
++try:
++    prepared.score_matrix(rows)
++except ValueError as error:
++    print("ragged rows are rejected:", error)
++rows = [case["parameters"], case["parameters"][:4] + [0.35] + case["parameters"][5:]]
++scores, statuses, steps = prepared.score_matrix(rows, workers=1)
++print(scores, statuses, steps)
++assert scores[0] == replay["score"]
++```
++
+ The optional differential-evolution driver times preparation, seeded
+ search and traced replay as one run. Install SciPy for this example.
+ 
+ ```sh
+ python -m pip install scipy
++python validation/optimize_performance.py hydro_craft --matrix
+ python validation/optimize_performance.py hydro_craft --scores
+ python validation/optimize_performance.py hydro_craft
+ ```
+ 
+-The driver uses small local bounds and a short fixed search budget.
+-For a scientific result, use problem-specific bounds, an explicit
+-feasibility penalty or constraint policy, and a held-out evaluation.
++The driver uses small local bounds and a short fixed search budget; all
++three modes give the same evaluations, failures and result. For a
++scientific result, use problem-specific bounds, an explicit feasibility
++penalty or constraint policy, and a held-out evaluation. The
++[examples](../examples/python/README.md) show complete SciPy and fcmaes
++searches with graded penalties.
+ 
+ ## 4. Run and resume a local campaign
+ 
+@@ -148,8 +169,10 @@ cargo build --release --locked --bins --examples
+ target/release/hydro-craft describe
+ target/release/hydro-craft run models/request.json
+ target/release/examples/sweep models/example.json
++target/release/examples/matrix
+ target/release/examples/performance models/example.json serial
+ CRAFT_SCORES=1 target/release/examples/performance models/example.json serial
++CRAFT_MATRIX=1 target/release/examples/performance models/example.json serial
+ ```
+ 
+ The CLI reads a request file or standard input with `run -`. Exit code
+@@ -158,19 +181,25 @@ indicates one or more unsuccessful rows in a well-formed request.
+ The benchmark prints elapsed seconds per prepared batch after warm-up.
+ Use `parallel` for four workers, `trace` for traced evaluations,
+ or `domain` and `domain2` for the package's supplemental cases.
++`CRAFT_SCORES=1` selects lean scores, `CRAFT_MATRIX=1` the matrix API and
++`CRAFT_WORKERS=N` overrides the worker count.
+ With a previous benchmark executable built from the baseline and this
+ one, `validation/performance_pair.py BEFORE AFTER models/example.json serial`
+-checks output parity and times both. See the included performance log
+-and raw evidence for the exact workloads and comparison boundaries.
++checks output parity and times both; `--before-scores`, `--after-scores`,
++`--before-matrix` and `--after-matrix` choose the API per side. See the
++included performance logs and raw evidence for the exact workloads and
++comparison boundaries.
+ 
+ ## 6. Verify results
+ 
+ ```sh
+ cargo test --release --locked
+-cargo clippy --locked --all-targets --features python -- -D warnings
++PYO3_PYTHON=python3 cargo clippy --release --locked --all-targets --features python -- -D warnings
+ python validation/validate.py target/release/hydro-craft
+ ```
+ 
+-Consult the [model card](model.md) for supported inputs, the
+-[architecture guide](architecture.md) for data flow and numerical
+-assumptions, and the [source notes](sources.md) for references.
++Consult the [user manual](user-manual.md) for the full reference, the
++[model card](model.md) for supported inputs, the
++[architecture guide](architecture.md) for data flow, numerical
++assumptions and performance, and the [source notes](sources.md) for
++references.
+diff --git a/docs/user-manual.md b/docs/user-manual.md
+new file mode 100644
+index 0000000..1ab0a79
+--- /dev/null
++++ b/docs/user-manual.md
+@@ -0,0 +1,885 @@
++# hydro-craft user manual
++
++Version 0.3.0. hydro-craft evaluates two small daily water models for
++research and optimization: a synthetic HBV-style **catchment** that turns
++precipitation, temperature and potential evapotranspiration into runoff,
++and a **reservoir** operated by a two-parameter release rule. Both are
++exposed through one prepared, batch-oriented evaluator in Rust, a Python
++package and a command-line tool. Every evaluation is a minimization: lower
++`score` is better.
++
++This manual is for researchers and engineers who use the model. It covers
++installation, concepts, the complete model and request reference, every
++API, budgets, reproducibility, performance and troubleshooting. All Python
++blocks in this manual are executed by `validation/release_checks.py`
++against the installed wheel, in order and in one namespace. Shell
++outputs shown here were copied from actual runs.
++
++The catchment is an independently specified synthetic fixture, not a
++port of a published HBV code; see the [model card](model.md) and the
++[source notes](sources.md) for scope.
++
++## Contents
++
++1. [Install](#1-install)
++2. [Concepts](#2-concepts)
++3. [Model reference](#3-model-reference)
++4. [Candidates, budgets and results](#4-candidates-budgets-and-results)
++5. [Statuses and error messages](#5-statuses-and-error-messages)
++6. [Budgets](#6-budgets)
++7. [Python API](#7-python-api)
++8. [Scenario cookbook](#8-scenario-cookbook)
++9. [Optimization](#9-optimization)
++10. [Campaigns](#10-campaigns)
++11. [Rust API](#11-rust-api)
++12. [Command line](#12-command-line)
++13. [Reproducibility and provenance](#13-reproducibility-and-provenance)
++14. [Performance tips](#14-performance-tips)
++15. [Troubleshooting](#15-troubleshooting)
++16. [Examples index](#16-examples-index)
++
++## 1. Install
++
++### Wheel
++
++The release ZIP contains a wheel for Linux x86-64 with the CPython 3.10+
++stable ABI (tested with CPython 3.12). Install it into a virtual
++environment; it has no runtime dependencies.
++
++```sh
++python3 -m venv .venv
++. .venv/bin/activate
++python -m pip install --no-deps packages/hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl
++```
++
++The optimization examples additionally use NumPy, SciPy and fcmaes:
++
++```sh
++python -m pip install numpy==2.3.5 scipy==1.17.0 fcmaes
++```
++
++### From source
++
++On other platforms, build the wheel from the source distribution or the
++source tree with Rust 1.88 or newer and maturin 1.9.6. Cargo needs the
++locked dependencies from its registry or cache.
++
++```sh
++python -m pip install maturin==1.9.6
++tar -xzf packages/hydro_craft-0.3.0.tar.gz
++cd hydro_craft-0.3.0
++maturin build --release --locked --out dist
++python -m pip install --no-deps dist/*.whl
++```
++
++### Command-line tool and Rust crate
++
++The CLI is a Rust binary built from the same crate:
++
++```sh
++cargo build --release --locked
++target/release/hydro-craft describe
++```
++
++```text
++{"batch":true,"models":["synthetic_daily_hbv_style","masked_runoff_calibration","one_reservoir"],"schema":"hydro-craft.capabilities/0.1","version":"0.3.0","worker_limit":64}
++```
++
++To use the library from another Rust project, depend on the crate by
++path or from the packaged `hydro-craft-0.3.0.crate` (see
++[section 11](#11-rust-api)).
++
++Check the installation:
++
++```python
++import hydro_craft
++from hydro_craft import Prepared, load_example
++
++case = load_example()
++prepared = Prepared(case["model"])
++row = prepared.evaluate(case["parameters"])
++print(row["status"], row["steps"], row["score"])
++```
++
++```text
++complete 90 4.965068306494546e-16
++```
++
++## 2. Concepts
++
++- **Model.** A JSON object with a `kind` of `"catchment"` or
++  `"reservoir"` that fixes every input that does not change between
++  candidates: forcing or inflows, fold boundaries, capacities.
++- **Prepared model.** `Prepared(model)` validates and stores the model
++  once and records the SHA-256 of its exact JSON bytes
++  (`model_sha256`). Every later call reuses it. A malformed model raises
++  `ValueError` (Rust: `Err(String)`).
++- **Candidate.** One parameter vector to evaluate: seven catchment
++  parameters or two reservoir controls. JSON calls wrap it with an `id`
++  and an optional `trace` flag; the matrix API takes bare rows.
++- **Batch.** Up to 4,096 candidates evaluated in one native call.
++  Records come back in input order whatever the worker count.
++- **Record.** The outcome of one candidate: `status`, logical `steps`,
++  `score` (only when complete), `metrics` (full records only) and
++  `detail` (only when not complete).
++- **Status.** `complete`, or a classified failure such as `invalid`
++  (bad parameters) or `work_limit` (budget). A failed candidate never
++  fails the batch; a malformed batch is rejected as a whole.
++- **Steps.** One logical step per simulated day. A complete candidate
++  takes exactly as many steps as the model has days.
++- **Budget.** Per-call limits: `workers`, `max_steps`, `wall_ms`,
++  `cancel_file`.
++- **Three result levels.** `batch` returns full records with metrics and
++  optional daily traces; `scores` returns the same records with
++  `metrics: null`; `score_matrix` returns only scores, statuses and
++  steps as three lists, with no JSON in either direction. All three give
++  identical statuses, steps and scores.
++- **Folds.** The catchment splits its days into warm-up, train,
++  validation and test. The score is the training RMSE; validation and
++  test fits are reported in full records for model selection and the
++  final check.
++
++## 3. Model reference
++
++Both models reject unknown fields and missing required fields. Numbers
++are JSON numbers; the Python wrapper refuses NaN and infinity in models
++and JSON calls.
++
++### 3.1 Catchment (`"kind": "catchment"`)
++
++| Field | Type | Unit | Bounds | Default |
++| --- | --- | --- | --- | --- |
++| `kind` | string | - | `"catchment"` | required |
++| `area_km2` | number | km² | `0 < area_km2 <= 1e7` | required |
++| `forcing` | array of days | - | 3 to 200,000 days | required |
++| `warmup` | integer | day index | `warmup < train_end` | required |
++| `train_end` | integer | day index | `train_end < validation_end` | required |
++| `validation_end` | integer | day index | `validation_end < len(forcing)` | required |
++
++Each forcing day:
++
++| Field | Type | Unit | Bounds | Default |
++| --- | --- | --- | --- | --- |
++| `day` | integer | day number | consecutive: each day is the previous plus 1 (any start, 0 to 2³²-1) | required |
++| `precipitation_mm` | number | mm/day | 0 to 2,000 | required |
++| `pet_mm` | number | mm/day | 0 to 100 | required |
++| `temperature_c` | number | °C | -100 to 100 | required |
++| `observed_mm` | number or null | mm/day | 0 to 2,000 | null (may be omitted) |
++
++Days `0..warmup` are warm-up: simulated but never scored. Days
++`warmup..train_end` are the **train** fold, `train_end..validation_end`
++the **validation** fold and `validation_end..` the **test** fold (index
++ranges are half-open). Every scored fold needs at least one non-null
++observation. A violated rule raises one of
++`invalid daily forcing, units, fold or catchment area` or
++`every scored fold needs observed data`.
++
++Parameters, in this order:
++
++| Index | Name | Unit | Valid range | Meaning |
++| ---: | --- | --- | --- | --- |
++| 0 | `capacity` | mm | 1 to 2,000 | soil moisture capacity |
++| 1 | `exponent` | - | 0.1 to 10 | recharge shape exponent |
++| 2 | `lp` | - | 0.05 to 1 | fraction of capacity above which evapotranspiration is unrestricted |
++| 3 | `kfast` | 1/day | 0 to 1 | upper-store recession fraction |
++| 4 | `kbase` | 1/day | 0 to 1 | lower-store recession fraction |
++| 5 | `percolation` | mm/day | 0 to 100 | upper-to-lower transfer limit |
++| 6 | `degree` | mm/(°C day) | 0 to 30 | degree-day melt factor |
++
++A vector of the wrong length is `invalid` with detail
++`expected capacity, exponent, lp, kfast, kbase, percolation, degree`;
++a value outside its range (or NaN in the matrix API) is `invalid` with
++`catchment parameter out of range`.
++
++Daily update (stores start empty: snow, soil, upper, lower):
++
++1. At or below 0 °C precipitation joins the snow store. Above 0 °C,
++   melt is `min(snow, degree * temperature)` and liquid water is
++   precipitation plus melt.
++2. Recharge is `liquid * (soil / capacity) ** exponent`, using the soil
++   store before today's input; the rest of the liquid water enters the
++   soil. Soil above capacity overflows.
++3. Evapotranspiration is `min(soil, pet * min(soil / (lp * capacity), 1))`.
++4. Recharge and overflow enter the upper store; at most `percolation`
++   moves on to the lower store.
++5. Runoff is `kfast * upper + kbase * lower`, removed from the stores.
++
++Score: root-mean-square error in mm/day between runoff and the non-null
++observations of the train fold. Full-record metrics:
++
++| Metric | Unit | Meaning |
++| --- | --- | --- |
++| `train`, `validation`, `test` | object | `observations` (count), `rmse_mm` (mm/day) and `volume_bias_mm` (sum of runoff minus observed, mm) per fold |
++| `balance_mm` | mm | sum of daily mass-balance residuals over all days |
++| `max_daily_balance_mm` | mm | largest absolute daily residual |
++| `trace` | array or null | daily rows when `trace: true` (at most 10,000 days) |
++
++Trace rows: `day`, `runoff_mm`, `discharge_m3_s` (runoff × area ×
++1,000 / 86,400), `et_mm`, `stores_mm` (`[snow, soil, upper, lower]` at
++the end of the day) and `balance_mm` (that day's residual).
++
++### 3.2 Reservoir (`"kind": "reservoir"`)
++
++| Field | Type | Unit | Bounds | Default |
++| --- | --- | --- | --- | --- |
++| `kind` | string | - | `"reservoir"` | required |
++| `capacity_m3` | number | m³ | `0 < capacity_m3 <= 1e12` | required |
++| `initial_m3` | number | m³ | 0 to `capacity_m3` | required |
++| `outlet_m3_per_day` | number | m³/day | 0 to 1e12 | required |
++| `reserve_m3` | number | m³ | 0 to `capacity_m3` | required |
++| `inputs` | array of days | - | 1 to 200,000 days | required |
++
++Each input day has `inflow_m3`, `evaporation_m3` and `demand_m3`, all
++required numbers in m³ from 0 to 1e12. A violation raises
++`invalid reservoir storage, capacity, outlet, or daily inputs`.
++
++Parameters: `[target, gain]`, both in `[0, 1]`. A wrong length is
++`invalid` with `expected target fraction and release gain`; an
++out-of-range value is `invalid` with `reservoir controls must be in [0,1]`.
++
++Daily operation, in order:
++
++1. Discretionary release request: `gain * max(previous storage - target * capacity, 0)`,
++   decided from the previous day's storage only (non-anticipatory).
++2. Add inflow; evaporate `min(storage, evaporation)`.
++3. Available outlet water: `min(max(storage - reserve, 0), outlet)`.
++   Deliver `min(available, demand)`; shortage is demand minus delivery.
++4. Release `min(available - delivered, request)`.
++5. Storage above capacity spills.
++
++Score: total shortage plus 0.05 × total spill (m³). Full-record metrics:
++`shortage_m3`, `spill_m3`, `shortage_days`, `longest_shortage_days`,
++`max_balance_m3` (largest absolute daily mass-balance residual) and
++`trace`. Trace rows: `storage_m3` (end of day), `delivered_m3`,
++`release_m3`, `shortage_m3`, `spill_m3` and `evaporation_m3`.
++
++```python
++reservoir_model = {
++    "kind": "reservoir", "capacity_m3": 100, "initial_m3": 40,
++    "outlet_m3_per_day": 20, "reserve_m3": 10,
++    "inputs": [{"inflow_m3": 8, "evaporation_m3": 1, "demand_m3": 15},
++               {"inflow_m3": 4, "evaporation_m3": 1, "demand_m3": 16},
++               {"inflow_m3": 90, "evaporation_m3": 2, "demand_m3": 5}],
++}
++reservoir = Prepared(reservoir_model)
++row = reservoir.evaluate([0.3, 0.5], trace=True)
++print(row["status"], row["steps"], row["score"])
++for day in row["metrics"]["trace"]:
++    print(day)
++print({k: v for k, v in row["metrics"].items() if k != "trace"})
++```
++
++```text
++complete 3 0.0
++{'delivered_m3': 15.0, 'evaporation_m3': 1.0, 'release_m3': 5.0, 'shortage_m3': 0.0, 'spill_m3': 0.0, 'storage_m3': 27.0}
++{'delivered_m3': 16.0, 'evaporation_m3': 1.0, 'release_m3': 0.0, 'shortage_m3': 0.0, 'spill_m3': 0.0, 'storage_m3': 14.0}
++{'delivered_m3': 5.0, 'evaporation_m3': 2.0, 'release_m3': 0.0, 'shortage_m3': 0.0, 'spill_m3': 0.0, 'storage_m3': 97.0}
++{'longest_shortage_days': 0, 'max_balance_m3': 0.0, 'shortage_days': 0, 'shortage_m3': 0.0, 'spill_m3': 0.0}
++```
++
++## 4. Candidates, budgets and results
++
++### Candidates (JSON calls)
++
++| Field | Type | Rules | Default |
++| --- | --- | --- | --- |
++| `id` | string | 1 to 128 bytes, unique within the batch | required |
++| `parameters` | array of numbers | at most 64 values | required |
++| `trace` | boolean | at most 16 traced candidates per batch; not allowed in `scores` | `false` |
++
++A batch holds 1 to 4,096 candidates. The matrix API takes 1 to 4,096
++rows of equal length (0 to 64 values) and has no IDs.
++
++### Budget
++
++| Field | Type | Range | Default | Meaning |
++| --- | --- | --- | --- | --- |
++| `workers` | integer | 1 to 64 | 1 | upper bound on concurrent evaluators |
++| `max_steps` | integer | 1 to 100,000,000 | 1,000,000 | step limit per candidate |
++| `wall_ms` | integer or null | 1 to 86,400,000 | null | batch deadline in milliseconds |
++| `cancel_file` | string or null | path | null | stop when this file exists |
++
++In Python the budget is passed as keyword arguments to `batch`,
++`scores`, `score_matrix`, `evaluate` and `campaign.run`.
++
++### Result envelope
++
++`batch` and `scores` return:
++
++| Field | Meaning |
++| --- | --- |
++| `model_sha256` | SHA-256 of the exact model JSON bytes |
++| `records` | one record per candidate, in input order |
++| `schema` | `"hydro-craft.result/0.1"` |
++| `version` | package version, `"0.3.0"` |
++
++Record fields: `id`, `status`, `steps`, `score` (number, only for
++`complete`), `metrics` (object for complete full records, otherwise
++null) and `detail` (string for every status except `complete`).
++
++### CLI request
++
++The command line reads one request object:
++
++| Field | Type | Default |
++| --- | --- | --- |
++| `schema` | `"hydro-craft.request/0.1"` | required |
++| `model` | model object | required |
++| `candidates` | array of candidates | required |
++| `budget` | budget object | defaults above |
++
++The CLI always returns full records; its output has sorted keys.
++
++## 5. Statuses and error messages
++
++### Record statuses
++
++| Status | Meaning | Steps | Typical detail |
++| --- | --- | --- | --- |
++| `complete` | simulated every day; `score` is set | number of days | null |
++| `invalid` | parameters rejected before the first step, or a traced run longer than 10,000 days | 0 | see below |
++| `work_limit` | the candidate reached `max_steps` | `max_steps` | `candidate step budget reached` |
++| `wall_limit` | the batch deadline passed | steps taken | `batch deadline reached` |
++| `cancelled` | the cancel file existed at a step | steps taken | `cancel file exists` |
++
++`infeasible` is part of the shared result schema but neither model
++produces it. Invalid details:
++`expected capacity, exponent, lp, kfast, kbase, percolation, degree`,
++`catchment parameter out of range`,
++`expected target fraction and release gain`,
++`reservoir controls must be in [0,1]`,
++`trace requires at most 10,000 days` and `nonfinite objective`.
++
++### Rejected calls
++
++These raise `ValueError` in Python, return `Err(String)` in Rust and
++exit with status 1 on the command line:
++
++| Message | Cause |
++| --- | --- |
++| `invalid budget or batch size` | workers, `max_steps` or `wall_ms` out of range, or 0 or more than 4,096 candidates |
++| `invalid or duplicate candidate id, or parameter vector exceeds limit` | empty, long or repeated ID, or more than 64 parameters |
++| `at most 16 traced candidates per batch` | too many `trace: true` |
++| `scores mode accepts untraced candidates only` | `trace: true` passed to `scores` |
++| `matrix rows must be between 1 and 4096` | empty or oversized matrix |
++| `parameter count is not a multiple of the row count` | Rust `score_matrix` with a ragged flat buffer |
++| `parameter vector exceeds limit of 64` | matrix rows longer than 64 |
++| `score_matrix rows must all have the same length` | ragged Python rows |
++| `score_matrix expects a 2-D array of parameter rows` | NumPy array with another shape |
++| `unknown field ...`, `missing field ...`, `invalid type ...` | JSON shape errors, with position |
++| model messages from section 3 | invalid model |
++| `unsupported request schema` | CLI request with another schema tag |
++| `request exceeds 16 MiB` | CLI input too large |
++
++```python
++for bad in ([{"id": "a", "parameters": []}] * 2, []):
++    try:
++        prepared.batch(bad)
++    except ValueError as error:
++        print("rejected:", error)
++row = prepared.evaluate([1.0, 2.0])
++print(row["status"], row["steps"], row["detail"])
++row = prepared.evaluate([0.5] + case["parameters"][1:])
++print(row["status"], row["detail"])
++```
++
++```text
++rejected: invalid or duplicate candidate id, or parameter vector exceeds limit
++rejected: invalid budget or batch size
++invalid 0 expected capacity, exponent, lp, kfast, kbase, percolation, degree
++invalid catchment parameter out of range
++```
++
++## 6. Budgets
++
++`workers` is an upper bound. One worker, or a single candidate, runs on
++the calling thread. More workers use persistent pool threads, created
++once per process, with the calling thread taking part; records keep
++input order and results do not depend on the worker count.
++
++`max_steps` limits each candidate separately. A candidate that needs
++more steps stops with `work_limit` after exactly `max_steps` steps.
++
++`wall_ms` sets one deadline for the whole batch, measured from when the
++batch starts. `cancel_file` stops every candidate whose next step finds
++the file present. Both are cooperative and checked before each step, so
++they can change which candidates finish; fixed-work results do not
++depend on timing. Monitored budgets (`wall_ms` or `cancel_file`) and a
++`max_steps` below the model's day count make the engine run candidates
++one at a time instead of in interleaved groups, which is slower (see
++[section 14](#14-performance-tips)).
++
++```python
++from pathlib import Path
++from tempfile import TemporaryDirectory
++
++x = case["parameters"]
++print(prepared.evaluate(x, max_steps=10)["status"], prepared.evaluate(x, max_steps=90)["status"])
++same = prepared.batch([{"id": str(i), "parameters": x} for i in range(8)], workers=4)
++print({r["status"] for r in same["records"]}, prepared.evaluate(x, wall_ms=60_000)["score"])
++with TemporaryDirectory() as folder:
++    flag = Path(folder) / "stop"
++    flag.touch()
++    print(prepared.score_matrix([x, x], cancel_file=str(flag)))
++```
++
++```text
++work_limit complete
++{'complete'} 4.965068306494546e-16
++([nan, nan], ['cancelled', 'cancelled'], [0, 0])
++```
++
++## 7. Python API
++
++```python
++from hydro_craft import Prepared, load_example
++from hydro_craft import campaign
++```
++
++### `load_example() -> dict`
++
++Returns the packaged 90-day catchment fixture as
++`{"model": ..., "parameters": [...]}`. The parameters reproduce its
++synthetic observations.
++
++### `Prepared(model: dict)`
++
++Validates and stores a model. The wrapper encodes the dict as compact
++JSON with sorted keys, so equal dicts give equal `model_sha256`.
++
++### `Prepared.batch(candidates, **budget) -> dict`
++
++Full records with metrics and optional traces. One native call per batch.
++
++### `Prepared.scores(candidates, **budget) -> dict`
++
++The same envelope and records with `metrics: null`; skips diagnostic
++work. Rejects traced candidates.
++
++### `Prepared.score_matrix(rows, **budget) -> (scores, statuses, steps)`
++
++`rows` is a list of equal-length lists or a 2-D NumPy array. Returns
++three lists in row order; `scores` holds NaN for every row that is not
++complete. No IDs, no JSON in either direction, and the GIL is released
++during evaluation.
++
++### `Prepared.evaluate(parameters, *, trace=False, **budget) -> dict`
++
++One full record (ID `"one"`), convenient for replay and inspection.
++
++```python
++candidates = [{"id": f"cap-{c}", "parameters": [c] + case["parameters"][1:]}
++              for c in (8.0, 10.0, 12.0)]
++full = prepared.batch(candidates)
++lean = prepared.scores(candidates)
++scores, statuses, steps = prepared.score_matrix([c["parameters"] for c in candidates])
++for f, l, s in zip(full["records"], lean["records"], scores):
++    assert f["score"] == l["score"] == s and l["metrics"] is None
++    print(f["id"], f["status"], f["steps"], round(f["score"], 6),
++          round(f["metrics"]["validation"]["rmse_mm"], 6))
++print(full["schema"], full["version"], full["model_sha256"] == lean["model_sha256"])
++```
++
++```text
++cap-8.0 complete 90 0.043187 0.055452
++cap-10.0 complete 90 0.0 0.0
++cap-12.0 complete 90 0.043985 0.05243
++hydro-craft.result/0.1 0.3.0 True
++```
++
++NumPy arrays go straight to `score_matrix`:
++
++```python
++import numpy as np
++
++population = np.array([case["parameters"]] * 3, dtype=float)
++population[1, 0] *= 1.05  # capacity +5 %
++population[2, 2] = 1.2    # lp outside its range
++scores, statuses, steps = prepared.score_matrix(population, workers=2)
++print([round(v, 5) for v in scores], statuses, steps)
++```
++
++```text
++[0.0, 0.00896, nan] ['complete', 'complete', 'invalid'] [90, 90, 0]
++```
++
++The third row sets `lp` to 1.2, outside its range, so it is invalid and
++its score is NaN.
++
++## 8. Scenario cookbook
++
++### Calibrate on train, select on validation, report test
++
++```python
++grid = [0.2, 0.25, 0.3, 0.35, 0.4]
++rows = [case["parameters"][:4] + [k] + case["parameters"][5:] for k in grid]
++scores, _, _ = prepared.score_matrix(rows)
++best = rows[min(range(len(rows)), key=scores.__getitem__)]
++final = prepared.evaluate(best)["metrics"]
++print("kbase", best[4], {fold: round(final[fold]["rmse_mm"], 12) for fold in ("train", "validation", "test")})
++```
++
++```text
++kbase 0.3 {'train': 0.0, 'validation': 0.0, 'test': 0.0}
++```
++
++### Missing observations and fold boundaries
++
++Null observations are skipped by the score and the fold metrics, but the
++day is still simulated. Moving a boundary changes which observations
++count.
++
++```python
++model = case["model"]
++masked = model | {"forcing": [d | {"observed_mm": None} if d["day"] % 3 == 0 else d
++                              for d in model["forcing"]]}
++shifted = model | {"warmup": 20, "train_end": 45}
++for name, variant in (("packaged", model), ("masked", masked), ("shifted", shifted)):
++    m = Prepared(variant).evaluate([12.0] + case["parameters"][1:])["metrics"]
++    print(name, [m[f]["observations"] for f in ("train", "validation", "test")], round(m["train"]["rmse_mm"], 4))
++```
++
++```text
++packaged [20, 27, 27] 0.044
++masked [13, 18, 18] 0.0475
++shifted [22, 14, 27] 0.0371
++```
++
++### Snow, melt and the water balance
++
++```python
++cold = model | {"forcing": [d | {"temperature_c": -5.0 if d["day"] < 30 else 6.0}
++                            for d in model["forcing"]]}
++traced = Prepared(cold).evaluate(case["parameters"], trace=True)["metrics"]
++snow = [day["stores_mm"][0] for day in traced["trace"]]
++print("peak snow", round(max(snow), 2), "mm on day", snow.index(max(snow)),
++      "| melted by day", next(i for i, s in enumerate(snow) if i > 30 and s == 0))
++print("max daily balance", traced["max_daily_balance_mm"] < 1e-12)
++```
++
++```text
++peak snow 219.32 mm on day 29 | melted by day 42
++max daily balance True
++```
++
++### Discharge and runoff traces
++
++```python
++trace = prepared.evaluate(case["parameters"], trace=True)["metrics"]["trace"]
++day = max(trace, key=lambda d: d["runoff_mm"])
++print(day["day"], round(day["runoff_mm"], 3), "mm =", round(day["discharge_m3_s"], 3),
++      "m3/s over", model["area_km2"], "km2")
++```
++
++```text
++17 17.393 mm = 17.393 m3/s over 86.4 km2
++```
++
++### Recharge exponent classes
++
++Exponents of exactly 1 or 2 use direct arithmetic and the fastest lane
++kernels; other values call the power function. Results are the same
++formula either way.
++
++```python
++for exponent in (1.0, 1.5, 2.0):
++    x = case["parameters"][:1] + [exponent] + case["parameters"][2:]
++    print(exponent, round(prepared.evaluate(x)["score"], 6))
++```
++
++```text
++1.0 0.0
++1.5 0.089461
++2.0 0.134889
++```
++
++### Reservoir rules and scenario comparison
++
++Dry inflows favor keeping water (no discretionary release); wet inflows
++favor releasing above a low target to avoid spill.
++
++```python
++def reservoir_case(scale):
++    """90 days with three wet days in every ten; scale shifts the inflow."""
++    inputs = [{"inflow_m3": scale * (40 if d % 10 < 3 else 4), "evaporation_m3": 1,
++               "demand_m3": 14} for d in range(90)]
++    return Prepared({"kind": "reservoir", "capacity_m3": 150, "initial_m3": 75,
++                     "outlet_m3_per_day": 25, "reserve_m3": 20, "inputs": inputs})
++
++rules = [[t / 4, g / 4] for t in range(5) for g in range(5)]
++for scale in (0.8, 1.0, 1.6):
++    scores, _, _ = reservoir_case(scale).score_matrix(rules)
++    i = min(range(len(rules)), key=scores.__getitem__)
++    print(scale, rules[i], round(scores[i], 2))
++```
++
++```text
++0.8 [0.0, 0.0] 229.4
++1.0 [0.0, 0.0] 0.0
++1.6 [0.25, 0.75] 1.95
++```
++
++### Many scenarios, one candidate set
++
++Prepare one model per scenario and reuse each:
++
++```python
++scenarios = {f"x{scale}": reservoir_case(scale) for scale in (0.8, 1.0, 1.6)}
++policy = [[0.5, 0.25]]
++print({name: round(p.score_matrix(policy)[0][0], 2) for name, p in scenarios.items()})
++print(scenarios["x0.8"].evaluate(policy[0])["metrics"]["shortage_days"])
++```
++
++```text
++{'x0.8': 255.7, 'x1.0': 58.37, 'x1.6': 15.4}
++25
++```
++
++## 9. Optimization
++
++Optimizers minimize `score`. Give failed candidates a penalty that is
++worse than any real score and, preferably, grows with the distance
++outside the valid ranges, so that the penalty points back into the
++valid region:
++
++```python
++LIMITS = [(1, 2000), (0.1, 10), (0.05, 1), (0, 1), (0, 1), (0, 100), (0, 30)]
++
++def objective_rows(rows):
++    """Penalized scores for a population of catchment parameter rows."""
++    scores, statuses, _ = prepared.score_matrix(rows)
++    out = []
++    for x, score, status in zip(rows, scores, statuses):
++        if status == "complete":
++            out.append(score)
++        else:
++            outside = sum(max(lo - v, 0, v - hi) for v, (lo, hi) in zip(x, LIMITS))
++            out.append(1e3 * (1 + outside))
++    return out
++
++print(objective_rows([case["parameters"], [10, 1, 1.3, 0.5, 0.3, 2, 3]]))
++```
++
++```text
++[4.965068306494546e-16, 1300.0]
++```
++
++A short SciPy differential evolution with a vectorized objective sends
++one generation per native call:
++
++```python
++from scipy.optimize import differential_evolution
++
++bounds = [(5, 15), (0.5, 2), (0.5, 1.2), (0.2, 0.8), (0.1, 0.5), (1, 3), (1, 5)]
++result = differential_evolution(lambda pop: objective_rows(pop.T), bounds, vectorized=True,
++                                updating="deferred", popsize=8, maxiter=40, seed=1, polish=False)
++print(round(result.fun, 4), result.nit, "generations")
++```
++
++```text
++0.0128 40 generations
++```
++
++The same pattern works with fcmaes ask/tell (`fcmaes.cmaes.Cmaes`,
++`fcmaes.de.DE`) and with fcmaes minimizers that call a scalar objective
++(`bitecpp.minimize`, `cmaescpp.minimize`, `de.minimize`); wrap a single
++vector as `prepared.score_matrix([x])`. Complete, longer examples are in
++[`examples/python/`](../examples/python/README.md): SciPy calibration,
++CMA-ES with whole populations and native workers, and robust reservoir
++rules with BiteOpt and C++ CMA-ES.
++
++`validation/optimize_performance.py` times one seeded SciPy search with
++`evaluate`, `scores` or `score_matrix` (`--scores`, `--matrix`); all
++three give the same evaluations, failures and result.
++
++## 10. Campaigns
++
++`campaign.run(database, scenarios, candidates, *, workers=1, chunk_size=16, **budget)`
++evaluates every candidate under every scenario, commits each chunk to
++SQLite and returns rows in manifest order. Completed, invalid and
++infeasible records are cached by build, scenario, model, candidate and
++work settings; canceled and time-limited attempts stay in the attempt
++journal and are retried on the next run. A new wheel build uses its own
++cache namespace.
++
++```python
++import sqlite3
++
++with TemporaryDirectory() as folder:
++    database = Path(folder) / "campaign.sqlite"
++    flag = Path(folder) / "stop"
++    scenario_list = [{"id": "packaged", "model": model}, {"id": "masked", "model": masked}]
++    trials = [{"id": f"k{k}", "parameters": case["parameters"][:4] + [k] + case["parameters"][5:]}
++              for k in (0.2, 0.3, 0.4)]
++    flag.touch()
++    stopped = campaign.run(database, scenario_list, trials, cancel_file=str(flag))
++    flag.unlink()
++    resumed = campaign.run(database, scenario_list, trials, workers=2)
++    again = campaign.run(database, scenario_list, trials)
++    print([r["record"]["status"] for r in stopped][:2], [r["record"]["status"] for r in resumed][:2])
++    print(resumed == again, sorted({r["scenario"] for r in resumed}))
++    with sqlite3.connect(database) as conn:
++        print(conn.execute("SELECT count(*) FROM results").fetchone()[0],
++              conn.execute("SELECT count(*) FROM attempts").fetchone()[0])
++```
++
++```text
++['cancelled', 'cancelled'] ['complete', 'complete']
++True ['masked', 'packaged']
++6 12
++```
++
++The repository's `validation/run_campaign.py MODULE models/campaign.json DB`
++runs a JSON manifest with the same function.
++
++## 11. Rust API
++
++```toml
++[dependencies]
++hydro-craft = { path = "../hydro-craft" }
++serde_json = "1"
++```
++
++| Item | Signature | Notes |
++| --- | --- | --- |
++| `Prepared::new` | `fn new(model: &str) -> Result<Prepared, String>` | validates, stores and hashes the model JSON |
++| `Prepared::model_sha256` | `fn model_sha256(&self) -> &str` | SHA-256 of the model bytes |
++| `Prepared::evaluate_json` | `fn evaluate_json(&self, candidates: &str, budget: &str) -> Result<String, String>` | full records |
++| `Prepared::scores_json` | `fn scores_json(&self, candidates: &str, budget: &str) -> Result<String, String>` | records with null metrics |
++| `Prepared::score_matrix` | `fn score_matrix(&self, rows: usize, parameters: &[f64], budget: &str) -> Result<Vec<MatrixScore>, String>` | row-major parameters; dimension `parameters.len() / rows`, 0 allowed |
++| `MatrixScore` | `{ status: &'static str, steps: u64, score: Option<f64> }` | `score` is `Some` only for `complete` |
++| `run` | `fn run(text: &str) -> Result<serde_json::Value, String>` | one CLI request |
++| `capabilities` | `fn capabilities() -> serde_json::Value` | the `describe` output |
++
++```rust
++use hydro_craft::Prepared;
++
++let prepared = Prepared::new(&model_json)?;
++let rows = vec![0.5, 0.1, 0.9, 0.0]; // two reservoir rules, row-major
++for row in prepared.score_matrix(2, &rows, r#"{"workers": 1}"#)? {
++    println!("{} {} {:?}", row.status, row.steps, row.score);
++}
++```
++
++`examples/matrix.rs` is a complete program
++(`cargo run --release --example matrix`); `examples/sweep.rs` scales the
++packaged parameters and prints the best full record. Each `score_matrix`
++row gives the same status, steps and bit-identical score as
++`scores_json` for the same parameters.
++
++## 12. Command line
++
++```text
++hydro-craft describe
++hydro-craft run FILE     (use - for standard input)
++```
++
++Exit status 0 means every record is complete, 2 means a well-formed
++request has at least one record that is not complete, and 1 means the
++request was rejected (the reason is printed to standard error as JSON).
++Requests are limited to 16 MiB.
++
++```sh
++echo '{"schema":"hydro-craft.request/0.1","model":{"kind":"reservoir","capacity_m3":10,"initial_m3":5,"outlet_m3_per_day":4,"reserve_m3":2,"inputs":[{"inflow_m3":2,"evaporation_m3":1,"demand_m3":8}]},"candidates":[{"id":"ok","parameters":[1,0]},{"id":"bad","parameters":[2,0]}]}' | target/release/hydro-craft run -; echo "exit $?"
++```
++
++```text
++{"model_sha256":"14f6eaaa4904340c1270bdb79a0813dde08cc385c5e677709ac190aaec80be99","records":[{"detail":null,"id":"ok","metrics":{"longest_shortage_days":1,"max_balance_m3":0.0,"shortage_days":1,"shortage_m3":4.0,"spill_m3":0.0,"trace":null},"score":4.0,"status":"complete","steps":1},{"detail":"reservoir controls must be in [0,1]","id":"bad","metrics":null,"score":null,"status":"invalid","steps":0}],"schema":"hydro-craft.result/0.1","version":"0.3.0"}
++exit 2
++```
++
++```sh
++echo '{"schema":"hydro-craft.request/0.1"}' | target/release/hydro-craft run -; echo "exit $?"
++```
++
++```text
++{"detail":"missing field `model` at line 1 column 36","status":"rejected"}
++exit 1
++```
++
++`models/request.json` is a complete traced catchment request:
++`target/release/hydro-craft run models/request.json`.
++
++## 13. Reproducibility and provenance
++
++- Results are deterministic for fixed inputs and fixed work limits: the
++  same model bytes, parameters and `max_steps` give the same statuses,
++  steps and bit-identical scores for any worker count and any of the
++  three result levels. 0.3.0 produces byte-identical JSON to 0.2.0 on
++  every benchmark workload (see the
++  [0.3.0 performance log](../hydro-craft-performance-log-0.3.0.md)).
++- `wall_ms` and `cancel_file` depend on timing and can change which
++  candidates finish.
++- `model_sha256` hashes the exact model bytes. The Python wrapper
++  encodes models with sorted keys, so two dicts with equal content hash
++  equally; hand-written JSON with other spacing hashes differently.
++- Every envelope carries `schema` (`hydro-craft.result/0.1`) and the
++  package `version`. The request and result schemas are unchanged
++  since 0.1.
++- Campaign rows store the SHA-256 of the native extension, the model
++  hash and every record, so a database documents which build produced
++  each result.
++- Keep the model JSON, the parameter vectors, the budget and the
++  package version with any published result.
++
++## 14. Performance tips
++
++Measured on a 2-vCPU Intel Xeon @ 2.10 GHz with Rust 1.97 and CPython
++3.12; see [architecture: performance](architecture.md#performance) for
++the tables and evidence.
++
++- **Use `score_matrix` inside optimizers.** From Python, 96 candidates
++  of the 90-day fixture took 53 µs with `score_matrix`, 286 µs with
++  `scores` and 728 µs with `batch`; one candidate took 4.5 µs, 10 µs
++  with `scores` and 16 µs with `evaluate`. Most of the difference is
++  JSON work in Python; natively the three calls took 0.045, 0.084 and
++  0.163 ms for 96 candidates.
++- **Evaluate populations, not single vectors.** Untraced candidates are
++  simulated in interleaved groups (up to 8 catchment or 16 reservoir
++  candidates), so a whole generation per call is several times cheaper
++  per candidate than one call per candidate.
++- **Leave `wall_ms` and `cancel_file` unset when you can.** They, and a
++  `max_steps` below the number of days, switch evaluation to one
++  candidate at a time with a checked step counter.
++- **Workers help only for large batches.** On the 2-vCPU host two
++  workers gave 1.3-1.7x for 48 candidates of 2,400 days, but made 96
++  candidates of 90 days slower. Start with `workers=1` and measure; four
++  workers on two CPUs gave no consistent gain over two.
++- **Traces are expensive.** A traced run is simulated alone and encodes
++  one JSON object per day; trace only the candidates you inspect.
++- **Exponents of exactly 1 or 2** run the fastest catchment kernels.
++  Other exponents call `powf` on every wet day.
++
++## 15. Troubleshooting
++
++| Symptom | Cause and fix |
++| --- | --- |
++| `ValueError: every scored fold needs observed data` | a fold has only null observations; move `warmup`, `train_end` or `validation_end`, or add observations |
++| `ValueError: invalid daily forcing, units, fold or catchment area` | a day number is not consecutive, a value is out of range, or the fold indexes are not increasing and inside the forcing |
++| `ValueError: unknown field ...` | a misspelled or extra key; models, days, candidates and budgets reject unknown keys (`fold` is computed, not an input) |
++| `ValueError: Out of range float values are not JSON compliant` | NaN or infinity in a model or JSON call; `score_matrix` accepts NaN and reports the row as `invalid` |
++| every record `invalid` with `expected ...` | wrong parameter count: 7 for the catchment, 2 for the reservoir |
++| every record `work_limit` | `max_steps` is below the number of days |
++| all records `cancelled` | the cancel file still exists; delete it before the next call |
++| `trace requires at most 10,000 days` | traced runs are limited; trace a shorter model or use untraced metrics |
++| `parallel` calls slower than serial | the batch is too small for helper threads; use `workers=1` |
++| different `model_sha256` for "the same" model | the JSON bytes differ (key order, spacing, number formatting) |
++| campaign re-evaluates everything after an upgrade | expected: the cache key includes the native build hash |
++
++## 16. Examples index
++
++| File | Scenario |
++| --- | --- |
++| [`examples/python/catchment_sensitivity.py`](../examples/python/catchment_sensitivity.py) | one-at-a-time and Morris sensitivity of the catchment |
++| [`examples/python/warming_scenarios.py`](../examples/python/warming_scenarios.py) | snow and runoff timing under +1 to +4 °C |
++| [`examples/python/reservoir_policy_study.py`](../examples/python/reservoir_policy_study.py) | minimax-regret release rule over dry, normal and wet years |
++| [`examples/python/scipy_calibration.py`](../examples/python/scipy_calibration.py) | SciPy vectorized DE calibration with penalties and holdout |
++| [`examples/python/fcmaes_cmaes_population.py`](../examples/python/fcmaes_cmaes_population.py) | fcmaes CMA-ES ask/tell with whole populations |
++| [`examples/python/fcmaes_robust_policy.py`](../examples/python/fcmaes_robust_policy.py) | fcmaes BiteOpt and C++ CMA-ES on a robust reservoir objective |
++| [`examples/matrix.rs`](../examples/matrix.rs) | Rust `score_matrix` screening and full replay |
++| [`examples/sweep.rs`](../examples/sweep.rs) | Rust parameter sweep with full records |
++| [`validation/optimize_performance.py`](../validation/optimize_performance.py) | timed SciPy search in full, scores and matrix modes |
++| [`validation/run_campaign.py`](../validation/run_campaign.py) | campaign manifest runner |
++
++The [tutorial](tutorial.md) is a shorter guided tour; the
++[architecture guide](architecture.md) explains the engine.
+diff --git a/evidence/performance-0.3.0/optimization/runs.json b/evidence/performance-0.3.0/optimization/runs.json
+new file mode 100644
+index 0000000..8ad3171
+--- /dev/null
++++ b/evidence/performance-0.3.0/optimization/runs.json
+@@ -0,0 +1,773 @@
++{
++  "runs_per_configuration": 7,
++  "cpu": "taskset -c 0",
++  "summary": {
++    "v0.2.0-full": {
++      "prepare_seconds": 0.00038624899980277405,
++      "search_seconds": 0.011682898999879399,
++      "replay_seconds": 0.0005271929999253189,
++      "total_seconds": 0.012578144000144675,
++      "evaluations": [
++        "168"
++      ],
++      "failures": [
++        "72"
++      ],
++      "best": [
++        "[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]"
++      ],
++      "score": [
++        "4.965068306494546e-16"
++      ]
++    },
++    "v0.2.0-scores": {
++      "prepare_seconds": 0.0003661580003608833,
++      "search_seconds": 0.010442564000186394,
++      "replay_seconds": 0.0007221239998216333,
++      "total_seconds": 0.011824524000076053,
++      "evaluations": [
++        "168"
++      ],
++      "failures": [
++        "72"
++      ],
++      "best": [
++        "[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]"
++      ],
++      "score": [
++        "4.965068306494546e-16"
++      ]
++    },
++    "v0.3.0-full": {
++      "prepare_seconds": 0.0003820390002147178,
++      "search_seconds": 0.011137375000089378,
++      "replay_seconds": 0.0003631820000009611,
++      "total_seconds": 0.011872655999923154,
++      "evaluations": [
++        "168"
++      ],
++      "failures": [
++        "72"
++      ],
++      "best": [
++        "[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]"
++      ],
++      "score": [
++        "4.965068306494546e-16"
++      ]
++    },
++    "v0.3.0-scores": {
++      "prepare_seconds": 0.0004150909999225405,
++      "search_seconds": 0.012920424000185449,
++      "replay_seconds": 0.00040317499997399864,
++      "total_seconds": 0.013658269000188739,
++      "evaluations": [
++        "168"
++      ],
++      "failures": [
++        "72"
++      ],
++      "best": [
++        "[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]"
++      ],
++      "score": [
++        "4.965068306494546e-16"
++      ]
++    },
++    "v0.3.0-matrix": {
++      "prepare_seconds": 0.0003753179998966516,
++      "search_seconds": 0.00845135300005495,
++      "replay_seconds": 0.00041202200009138323,
++      "total_seconds": 0.009268142000109947,
++      "evaluations": [
++        "168"
++      ],
++      "failures": [
++        "72"
++      ],
++      "best": [
++        "[10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0]"
++      ],
++      "score": [
++        "4.965068306494546e-16"
++      ]
++    }
++  },
++  "runs": {
++    "v0.2.0-full": [
++      {
++        "mode": "full",
++        "total_seconds": 0.012404934000187495,
++        "prepare_seconds": 0.00038624899980277405,
++        "search_seconds": 0.011590238000280806,
++        "replay_seconds": 0.00042844700010391534,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.011705557999903249,
++        "prepare_seconds": 0.0003535699997883057,
++        "search_seconds": 0.010866485999940778,
++        "replay_seconds": 0.000485502000174165,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.012654914999984612,
++        "prepare_seconds": 0.00036027500027557835,
++        "search_seconds": 0.01173610399973768,
++        "replay_seconds": 0.0005585359999713546,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.012641024000004109,
++        "prepare_seconds": 0.00041660600027171313,
++        "search_seconds": 0.011697224999807077,
++        "replay_seconds": 0.0005271929999253189,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.013125789000241639,
++        "prepare_seconds": 0.00042130900010306505,
++        "search_seconds": 0.012131569000302989,
++        "replay_seconds": 0.0005729109998355852,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.012578144000144675,
++        "prepare_seconds": 0.0003798810002990649,
++        "search_seconds": 0.011682898999879399,
++        "replay_seconds": 0.0005153639999662118,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.011929093999697216,
++        "prepare_seconds": 0.00043482699993546703,
++        "search_seconds": 0.010963989999709156,
++        "replay_seconds": 0.0005302770000525925,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      }
++    ],
++    "v0.2.0-scores": [
++      {
++        "mode": "scores",
++        "total_seconds": 0.010992867999902955,
++        "prepare_seconds": 0.00034392999987176154,
++        "search_seconds": 0.010097178000251006,
++        "replay_seconds": 0.0005517599997801881,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.013052427999809879,
++        "prepare_seconds": 0.00037580899970635073,
++        "search_seconds": 0.011954495000281895,
++        "replay_seconds": 0.0007221239998216333,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.008710809999683988,
++        "prepare_seconds": 0.00029137000001355773,
++        "search_seconds": 0.007901536999725067,
++        "replay_seconds": 0.0005179029999453633,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.010338405000311468,
++        "prepare_seconds": 0.0003661580003608833,
++        "search_seconds": 0.009446184999887919,
++        "replay_seconds": 0.0005260620000626659,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.015922515000056592,
++        "prepare_seconds": 0.0004588940000758157,
++        "search_seconds": 0.014205356999809737,
++        "replay_seconds": 0.0012582640001710388,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.019487744999878487,
++        "prepare_seconds": 0.0006256779997784179,
++        "search_seconds": 0.017990674000429863,
++        "replay_seconds": 0.0008713929996702063,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.011824524000076053,
++        "prepare_seconds": 0.0003538629998729448,
++        "search_seconds": 0.010442564000186394,
++        "replay_seconds": 0.0010280970000167144,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      }
++    ],
++    "v0.3.0-full": [
++      {
++        "mode": "full",
++        "total_seconds": 0.011872655999923154,
++        "prepare_seconds": 0.0003949970000576286,
++        "search_seconds": 0.011137375000089378,
++        "replay_seconds": 0.00034028399977614754,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.01109134600028483,
++        "prepare_seconds": 0.000610415000210196,
++        "search_seconds": 0.010182126000017888,
++        "replay_seconds": 0.0002988050000567455,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.01639203800004907,
++        "prepare_seconds": 0.0003739190001397219,
++        "search_seconds": 0.015297649999865826,
++        "replay_seconds": 0.0007204690000435221,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.011245666999911919,
++        "prepare_seconds": 0.0003820390002147178,
++        "search_seconds": 0.01050044599969624,
++        "replay_seconds": 0.0003631820000009611,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.014832332999958453,
++        "prepare_seconds": 0.0005657930000779743,
++        "search_seconds": 0.01387465300012991,
++        "replay_seconds": 0.00039188699975056807,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.013068456999917544,
++        "prepare_seconds": 0.0003700739998748759,
++        "search_seconds": 0.012327476999871578,
++        "replay_seconds": 0.00037090600017108954,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.010656976000063878,
++        "prepare_seconds": 0.0003399020001779718,
++        "search_seconds": 0.010005439999986265,
++        "replay_seconds": 0.0003116339998996409,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      }
++    ],
++    "v0.3.0-scores": [
++      {
++        "mode": "scores",
++        "total_seconds": 0.011621069000284479,
++        "prepare_seconds": 0.00037909499997113016,
++        "search_seconds": 0.010847571000340395,
++        "replay_seconds": 0.0003944029999729537,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.015618582000115566,
++        "prepare_seconds": 0.0006092590001571807,
++        "search_seconds": 0.014606147999984387,
++        "replay_seconds": 0.00040317499997399864,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.013658269000188739,
++        "prepare_seconds": 0.0003621649998422072,
++        "search_seconds": 0.012920424000185449,
++        "replay_seconds": 0.0003756800001610827,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.011153929000101925,
++        "prepare_seconds": 0.0004150909999225405,
++        "search_seconds": 0.01035519100014426,
++        "replay_seconds": 0.00038364700003512553,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.017180822999762313,
++        "prepare_seconds": 0.0005767279999417951,
++        "search_seconds": 0.016014470999834884,
++        "replay_seconds": 0.0005896239999856334,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.016013045999898168,
++        "prepare_seconds": 0.0005470860000968969,
++        "search_seconds": 0.01490391900006216,
++        "replay_seconds": 0.0005620409997391107,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.013639708000027895,
++        "prepare_seconds": 0.00035355099998923833,
++        "search_seconds": 0.012723745000130293,
++        "replay_seconds": 0.0005624119999083632,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      }
++    ],
++    "v0.3.0-matrix": [
++      {
++        "mode": "matrix",
++        "total_seconds": 0.009355984999729117,
++        "prepare_seconds": 0.00039488999982495443,
++        "search_seconds": 0.008500944999923377,
++        "replay_seconds": 0.00046014999998078565,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.009602825000001758,
++        "prepare_seconds": 0.0003753179998966516,
++        "search_seconds": 0.008815485000013723,
++        "replay_seconds": 0.00041202200009138323,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.008873343999766803,
++        "prepare_seconds": 0.00037284700010786764,
++        "search_seconds": 0.008112032999633811,
++        "replay_seconds": 0.0003884640000251238,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.008221991000027629,
++        "prepare_seconds": 0.0003627979999691888,
++        "search_seconds": 0.0074859679998553474,
++        "replay_seconds": 0.00037322500020309235,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.008511015999829397,
++        "prepare_seconds": 0.0003689519999170443,
++        "search_seconds": 0.0077345479999166855,
++        "replay_seconds": 0.0004075159999956668,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.009268142000109947,
++        "prepare_seconds": 0.0004007990000900463,
++        "search_seconds": 0.00845135300005495,
++        "replay_seconds": 0.0004159899999649497,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.010042414000054123,
++        "prepare_seconds": 0.0003766350000660168,
++        "search_seconds": 0.00919103299975177,
++        "replay_seconds": 0.00047474600023633684,
++        "evaluations": 168,
++        "failures": 72,
++        "best": [
++          10.0,
++          1.0,
++          1.0,
++          0.5,
++          0.3,
++          2.0,
++          3.0
++        ],
++        "score": 4.965068306494546e-16
++      }
++    ]
++  }
++}
+diff --git a/evidence/performance-0.3.0/python-call-costs-v020.json b/evidence/performance-0.3.0/python-call-costs-v020.json
+new file mode 100644
+index 0000000..547ddae
+--- /dev/null
++++ b/evidence/performance-0.3.0/python-call-costs-v020.json
+@@ -0,0 +1,10 @@
++{
++  "module": "hydro_craft",
++  "seconds_per_call": {
++    "evaluate_one": 1.9266459999016662e-05,
++    "batch_one": 1.8224964996989e-05,
++    "scores_one": 1.1371199998393421e-05,
++    "batch_96": 0.0010865691599974525,
++    "scores_96": 0.00043839609999849925
++  }
++}
+diff --git a/evidence/performance-0.3.0/python-call-costs-v030.json b/evidence/performance-0.3.0/python-call-costs-v030.json
+new file mode 100644
+index 0000000..741adb1
+--- /dev/null
++++ b/evidence/performance-0.3.0/python-call-costs-v030.json
+@@ -0,0 +1,12 @@
++{
++  "module": "hydro_craft",
++  "seconds_per_call": {
++    "evaluate_one": 1.6147010001077433e-05,
++    "batch_one": 1.5508800001953203e-05,
++    "scores_one": 1.0294179996890307e-05,
++    "batch_96": 0.0007276783150018673,
++    "scores_96": 0.000286436930000491,
++    "score_matrix_one": 4.450850001376239e-06,
++    "score_matrix_96": 5.288081000344391e-05
++  }
++}
+diff --git a/validation/python_call_costs.py b/validation/python_call_costs.py
+new file mode 100644
+index 0000000..fbd4ed8
+--- /dev/null
++++ b/validation/python_call_costs.py
+@@ -0,0 +1,49 @@
++"""Median per-call cost of the installed package's Python APIs.
++
++Times `evaluate` (full record), `batch`, `scores` and `score_matrix` for
++one candidate and for 96 candidates of the packaged 90-day example, all
++with one worker. Each value is the median of 15 rounds of 200 calls.
++"""
++
++import importlib
++import json
++import statistics
++import sys
++import time
++
++
++def median_call(fn, calls=200, rounds=15):
++    fn()
++    times = []
++    for _ in range(rounds):
++        start = time.perf_counter()
++        for _ in range(calls):
++            fn()
++        times.append((time.perf_counter() - start) / calls)
++    return statistics.median(times)
++
++
++def main():
++    package = importlib.import_module(sys.argv[1])
++    example = package.load_example()
++    prepared = package.Prepared(example["model"])
++    x = example["parameters"]
++    rows = [[x[0] * (1 + (i % 13) * 0.003)] + x[1:] for i in range(96)]
++    one = [{"id": "one", "parameters": x}]
++    many = [{"id": f"c{i}", "parameters": r} for i, r in enumerate(rows)]
++    cases = {
++        "evaluate_one": lambda: prepared.evaluate(x),
++        "batch_one": lambda: prepared.batch(one),
++        "scores_one": lambda: prepared.scores(one),
++        "batch_96": lambda: prepared.batch(many),
++        "scores_96": lambda: prepared.scores(many),
++    }
++    if hasattr(prepared, "score_matrix"):
++        cases["score_matrix_one"] = lambda: prepared.score_matrix([x])
++        cases["score_matrix_96"] = lambda: prepared.score_matrix(rows)
++    result = {name: median_call(fn) for name, fn in cases.items()}
++    print(json.dumps({"module": sys.argv[1], "seconds_per_call": result}, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/validation/release_checks.py b/validation/release_checks.py
+index 30aa38c..98d5227 100644
+--- a/validation/release_checks.py
++++ b/validation/release_checks.py
+@@ -1,4 +1,9 @@
+-"""Check the installed lean API and run the Python snippets in the tutorial."""
++"""Check the installed lean and matrix APIs and run the Python snippets in the docs.
++
++Usage: release_checks.py MODULE TUTORIAL [MANUAL]. MANUAL defaults to
++user-manual.md next to TUTORIAL. Each document's Python blocks run in
++order in one namespace per document.
++"""
+ 
+ import importlib
+ import json
+@@ -7,7 +12,8 @@ import re
+ import sys
+ from tempfile import TemporaryDirectory
+ 
+-module, tutorial = sys.argv[1:]
++module, tutorial, *rest = sys.argv[1:]
++manual = rest[0] if rest else str(Path(tutorial).with_name("user-manual.md"))
+ package = importlib.import_module(module)
+ example = package.load_example()
+ prepared = package.Prepared(example["model"])
+@@ -76,10 +82,17 @@ except ValueError:
+ else:
+     raise AssertionError("scores accepted a traced candidate")
+ 
+-snippets = re.findall(r"^```python\n(.*?)^```", Path(tutorial).read_text(), re.M | re.S)
+-assert len(snippets) >= 4
+-namespace = {}
+-for i, snippet in enumerate(snippets, 1):
+-    exec(compile(snippet, f"tutorial-{i}", "exec"), namespace)
+-print(json.dumps({"status": "passed", "tutorial_python_blocks": len(snippets),
++def run_blocks(path, label, minimum):
++    snippets = re.findall(r"^```python\n(.*?)^```", Path(path).read_text(), re.M | re.S)
++    assert len(snippets) >= minimum, (path, len(snippets))
++    namespace = {}
++    for i, snippet in enumerate(snippets, 1):
++        exec(compile(snippet, f"{label}-{i}", "exec"), namespace)
++    return len(snippets)
++
++
++tutorial_blocks = run_blocks(tutorial, "tutorial", 4)
++manual_blocks = run_blocks(manual, "manual", 15) if Path(manual).exists() else 0
++print(json.dumps({"status": "passed", "tutorial_python_blocks": tutorial_blocks,
++                  "manual_python_blocks": manual_blocks,
+                   "lean_api_and_budget_parity": True, "matrix_api_parity": True}))
+-- 
+2.43.0
+
