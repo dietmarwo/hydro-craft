@@ -168,3 +168,14 @@ and the catchment about 3x faster per day.
   before.
 - Expected: an exploratory build with sixteen lanes ran the lean call
   in about 0.39 ms against 0.51 ms, so about 1.3x.
+
+## Round 10: eight lanes for full catchment records of a known class
+
+- Change: full catchment records whose exponent is exactly 1 or 2 run
+  in groups of up to eight lanes, like lean scores; the dynamic class
+  keeps four. The step functions are unchanged, so results stay
+  bit-identical.
+- Workload: `domain` (48 full catchment records of 2,400 days), round 9
+  before.
+- Expected: an exploratory build ran this call in about 0.74-1.1 ms
+  against 1.2-1.6 ms, so about 1.2x.

@@ -454,15 +454,15 @@ pub fn evaluate_lanes(
                     Err(e) => results.push((Err(e), 0)),
                 }
             }
-            // Lanes of one exponent class share a kernel. Lean runs of a known
-            // class use up to eight lanes; the others use up to four.
+            // Lanes of one exponent class share a kernel. A known class uses up
+            // to eight lanes; the dynamic class, with its power call, four.
             for class in [LINEAR, QUADRATIC, DYNAMIC] {
                 let lanes: Vec<_> = valid
                     .iter()
                     .filter(|(_, p)| exponent_class(p.exponent) == class)
                     .copied()
                     .collect();
-                let widest = if metrics || class == DYNAMIC { 4 } else { 8 };
+                let widest = if class == DYNAMIC { 4 } else { 8 };
                 let mut rest = lanes.as_slice();
                 while !rest.is_empty() {
                     let width = [8, 4, 2, 1]
