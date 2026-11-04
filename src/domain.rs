@@ -1,6 +1,5 @@
 use crate::{Evaluation, Work, invalid};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 pub const CAPABILITIES: &[&str] = &[
     "synthetic_daily_hbv_style",
@@ -23,7 +22,7 @@ pub enum Model {
         initial_m3: f64,
         outlet_m3_per_day: f64,
         reserve_m3: f64,
-        inputs: Vec<ReservoirDay>,
+        inputs: Vec<ReservoirInput>,
     },
 }
 #[derive(Deserialize)]
@@ -39,7 +38,7 @@ pub struct Day {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReservoirDay {
+pub struct ReservoirInput {
     inflow_m3: f64,
     evaporation_m3: f64,
     demand_m3: f64,
@@ -161,7 +160,7 @@ pub struct CatchmentMetrics {
     balance_mm: f64,
     max_daily_balance_mm: f64,
     test: FoldMetrics,
-    trace: Option<Vec<Value>>,
+    trace: Option<Vec<CatchmentDay>>,
     train: FoldMetrics,
     validation: FoldMetrics,
 }
@@ -173,7 +172,29 @@ pub struct ReservoirMetrics {
     shortage_days: u64,
     shortage_m3: f64,
     spill_m3: f64,
-    trace: Option<Vec<Value>>,
+    trace: Option<Vec<ReservoirDay>>,
+}
+
+/// One traced catchment day, fields in sorted key order.
+#[derive(Debug, Serialize)]
+pub struct CatchmentDay {
+    balance_mm: f64,
+    day: u32,
+    discharge_m3_s: f64,
+    et_mm: f64,
+    runoff_mm: f64,
+    stores_mm: [f64; 4],
+}
+
+/// One traced reservoir day, fields in sorted key order.
+#[derive(Debug, Serialize)]
+pub struct ReservoirDay {
+    delivered_m3: f64,
+    evaporation_m3: f64,
+    release_m3: f64,
+    shortage_m3: f64,
+    spill_m3: f64,
+    storage_m3: f64,
 }
 
 /// Full-record metrics, serialized as the model's metrics object.
@@ -220,7 +241,7 @@ pub fn evaluate(
             let mut folds: [Score; 3] = Default::default();
             let mut balance = 0.0_f64;
             let mut max_balance = 0.0_f64;
-            let mut trace = Vec::new();
+            let mut trace = Vec::with_capacity(if traced { forcing.len() } else { 0 });
             let evap_scale = lp * capacity;
             for d in forcing {
                 work.step()?;
@@ -270,9 +291,14 @@ pub fn evaluate(
                     balance += residual;
                     max_balance = max_balance.max(residual.abs());
                     if traced {
-                        trace.push(json!({"day":d.day,"runoff_mm":runoff,
-                        "discharge_m3_s":runoff*area_km2*1000.0/86_400.0,"stores_mm":[snow,soil,upper,lower],
-                        "et_mm":evap,"balance_mm":residual}));
+                        trace.push(CatchmentDay {
+                            balance_mm: residual,
+                            day: d.day,
+                            discharge_m3_s: runoff * area_km2 * 1000.0 / 86_400.0,
+                            et_mm: evap,
+                            runoff_mm: runoff,
+                            stores_mm: [snow, soil, upper, lower],
+                        });
                     }
                 }
                 if d.fold != 0
@@ -314,7 +340,7 @@ pub fn evaluate(
             let mut spill_total = 0.0;
             let (mut streak, mut longest, mut short_days) = (0_u64, 0_u64, 0_u64);
             let mut max_balance = 0.0_f64;
-            let mut trace = Vec::new();
+            let mut trace = Vec::with_capacity(if traced { inputs.len() } else { 0 });
             let threshold = target * capacity_m3;
             for d in inputs {
                 work.step()?;
@@ -345,8 +371,14 @@ pub fn evaluate(
                     let balance = before + d.inflow_m3 - evap - delivered - release - spill - store;
                     max_balance = max_balance.max(balance.abs());
                     if traced {
-                        trace.push(json!({"storage_m3":store,"delivered_m3":delivered,
-                        "release_m3":release,"shortage_m3":shortage,"spill_m3":spill,"evaporation_m3":evap}));
+                        trace.push(ReservoirDay {
+                            delivered_m3: delivered,
+                            evaporation_m3: evap,
+                            release_m3: release,
+                            shortage_m3: shortage,
+                            spill_m3: spill,
+                            storage_m3: store,
+                        });
                     }
                 }
             }

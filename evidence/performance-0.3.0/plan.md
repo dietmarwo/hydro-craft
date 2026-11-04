@@ -71,3 +71,12 @@ and the catchment about 3x faster per day.
 - Workload: `serial` (96 full records, one worker), round 2 before.
 - Expected: the profile attributes about 180 us of evaluation and 90 us
   of encoding to full metrics, so about 1.5x.
+
+## Round 4: typed trace rows
+
+- Change: traced days become typed catchment and reservoir day structs,
+  preallocated per traced candidate, instead of one `json!` map with
+  six string keys per simulated day. Fields stay in sorted key order.
+- Workload: `trace` (12 traced full records of 90 days), round 3 before.
+- Expected: the profile spent about 1.4 ms building and 0.4 ms encoding
+  the per-day maps, so at least 2x.
