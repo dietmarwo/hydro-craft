@@ -57,6 +57,10 @@ fn main() {
         .map(|v| v.as_f64().unwrap())
         .collect();
     let candidates = serde_json::to_string(&candidates).unwrap();
+    // CRAFT_WORKERS overrides the workload's worker count for scaling studies.
+    let workers = std::env::var("CRAFT_WORKERS").ok().map_or(workers, |w| {
+        w.parse().expect("CRAFT_WORKERS must be an integer")
+    });
     let budget = json!({"workers":workers}).to_string();
     let evaluator = Prepared::new(&model.to_string()).unwrap();
     let lean = std::env::var_os("CRAFT_SCORES").is_some();

@@ -60,3 +60,14 @@ and the catchment about 3x faster per day.
   host), round 1 before, round 2 after.
 - Expected: thread creation and join cost 100-430 us per batch here,
   against roughly 0.4 ms of serial work, so at least 2x.
+
+## Round 3: typed full-record metrics
+
+- Change: the domain returns typed catchment and reservoir metrics
+  structs that serialize directly, instead of building nested
+  `serde_json::Value` maps with string keys for every record. Fields are
+  declared in sorted key order so the JSON text is unchanged; the CLI
+  still converts the typed batch to a `Value`.
+- Workload: `serial` (96 full records, one worker), round 2 before.
+- Expected: the profile attributes about 180 us of evaluation and 90 us
+  of encoding to full metrics, so about 1.5x.

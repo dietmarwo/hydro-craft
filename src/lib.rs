@@ -14,33 +14,24 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub type Evaluation = Result<(f64, Value), Failure>;
+/// A domain result: the objective and, when metrics are enabled, typed metrics.
+pub(crate) type Evaluation = Result<(f64, Option<domain::Metrics>), Failure>;
 
 #[derive(Debug, Clone)]
 pub struct Failure {
     status: &'static str,
     detail: String,
-    metrics: Option<Value>,
 }
 pub fn invalid(detail: impl Into<String>) -> Failure {
     Failure {
         status: "invalid",
         detail: detail.into(),
-        metrics: None,
     }
 }
 pub fn infeasible(detail: impl Into<String>) -> Failure {
     Failure {
         status: "infeasible",
         detail: detail.into(),
-        metrics: None,
-    }
-}
-
-impl Failure {
-    pub fn with_metrics(mut self, metrics: Value) -> Self {
-        self.metrics = Some(metrics);
-        self
     }
 }
 
@@ -80,12 +71,9 @@ pub struct Work<'a> {
     metrics_enabled: bool,
 }
 impl Work<'_> {
-    pub fn metrics(&self, make: impl FnOnce() -> Value) -> Value {
-        if self.metrics_enabled {
-            make()
-        } else {
-            Value::Null
-        }
+    /// Build metrics only for full records.
+    pub fn metrics<M>(&self, make: impl FnOnce() -> M) -> Option<M> {
+        self.metrics_enabled.then(make)
     }
 
     #[inline]
@@ -103,21 +91,18 @@ impl Work<'_> {
             return Err(Failure {
                 status: "cancelled",
                 detail: "cancel file exists".into(),
-                metrics: None,
             });
         }
         if self.deadline.is_some_and(|d| Instant::now() >= d) {
             return Err(Failure {
                 status: "wall_limit",
                 detail: "batch deadline reached".into(),
-                metrics: None,
             });
         }
         if self.used == self.budget.max_steps {
             return Err(Failure {
                 status: "work_limit",
                 detail: "candidate step budget reached".into(),
-                metrics: None,
             });
         }
         self.used += 1;
@@ -131,7 +116,7 @@ struct Record<'a> {
     status: &'static str,
     steps: u64,
     score: Option<f64>,
-    metrics: Option<Value>,
+    metrics: Option<domain::Metrics>,
     detail: Option<String>,
 }
 
@@ -321,7 +306,7 @@ impl Prepared {
                 status: "complete",
                 steps,
                 score: Some(score),
-                metrics: Some(metrics),
+                metrics,
                 detail: None,
             },
             (Err(e), steps) => Record {
@@ -329,7 +314,7 @@ impl Prepared {
                 status: e.status,
                 steps,
                 score: None,
-                metrics: if metrics_enabled { e.metrics } else { None },
+                metrics: None,
                 detail: Some(e.detail),
             },
         }
@@ -647,6 +632,46 @@ mod tests {
                 res.score_matrix(1, &[0.5, 0.1], budget).is_err(),
                 "{budget}"
             );
+        }
+    }
+
+    /// Full records serialize metrics with sorted keys, exactly as the
+    /// `serde_json::Value` maps of 0.2.0 did, and the CLI view agrees.
+    #[test]
+    fn typed_metrics_keep_sorted_json_and_cli_values() {
+        let example = fixture();
+        for (model, parameters) in [
+            (example["model"].clone(), example["parameters"].clone()),
+            (reservoir(), json!([0.4, 0.3])),
+        ] {
+            let prepared = Prepared::new(&model.to_string()).unwrap();
+            let candidates = json!([
+                {"id":"plain","parameters":parameters},
+                {"id":"traced","parameters":parameters,"trace":true},
+            ]);
+            let text = prepared
+                .evaluate_json(&candidates.to_string(), "{}")
+                .unwrap();
+            #[derive(Deserialize)]
+            struct Row<'a> {
+                #[serde(borrow)]
+                metrics: &'a RawValue,
+            }
+            #[derive(Deserialize)]
+            struct Rows<'a> {
+                #[serde(borrow)]
+                records: Vec<Row<'a>>,
+            }
+            let rows: Rows = serde_json::from_str(&text).unwrap();
+            for row in rows.records {
+                let sorted: Value = serde_json::from_str(row.metrics.get()).unwrap();
+                assert!(sorted.is_object());
+                assert_eq!(row.metrics.get(), sorted.to_string());
+            }
+            let request = json!({"schema":"hydro-craft.request/0.1","model":model,
+                                 "candidates":candidates});
+            let cli = run(&request.to_string()).unwrap();
+            assert_eq!(cli, serde_json::from_str::<Value>(&text).unwrap());
         }
     }
 }

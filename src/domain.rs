@@ -1,6 +1,6 @@
 use crate::{Evaluation, Work, invalid};
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 pub const CAPABILITIES: &[&str] = &[
     "synthetic_daily_hbv_style",
@@ -138,9 +138,50 @@ impl Score {
     fn rmse(&self) -> f64 {
         (self.squares / self.n as f64).sqrt()
     }
-    fn result(&self) -> serde_json::Value {
-        json!({"rmse_mm":self.rmse(),"volume_bias_mm":self.bias,"observations":self.n})
+    fn result(&self) -> FoldMetrics {
+        FoldMetrics {
+            observations: self.n,
+            rmse_mm: self.rmse(),
+            volume_bias_mm: self.bias,
+        }
     }
+}
+
+/// Fit of one scored fold. Fields are declared in key order, matching the
+/// sorted maps of earlier releases.
+#[derive(Debug, Serialize)]
+pub struct FoldMetrics {
+    observations: u64,
+    rmse_mm: f64,
+    volume_bias_mm: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CatchmentMetrics {
+    balance_mm: f64,
+    max_daily_balance_mm: f64,
+    test: FoldMetrics,
+    trace: Option<Vec<Value>>,
+    train: FoldMetrics,
+    validation: FoldMetrics,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReservoirMetrics {
+    longest_shortage_days: u64,
+    max_balance_m3: f64,
+    shortage_days: u64,
+    shortage_m3: f64,
+    spill_m3: f64,
+    trace: Option<Vec<Value>>,
+}
+
+/// Full-record metrics, serialized as the model's metrics object.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum Metrics {
+    Catchment(CatchmentMetrics),
+    Reservoir(ReservoirMetrics),
 }
 
 pub fn evaluate(
@@ -244,9 +285,14 @@ pub fn evaluate(
             Ok((
                 folds[0].rmse(),
                 work.metrics(|| {
-                    json!({"train":folds[0].result(),"validation":folds[1].result(),
-                "test":folds[2].result(),"balance_mm":balance,"max_daily_balance_mm":max_balance,
-                "trace":traced.then_some(trace)})
+                    Metrics::Catchment(CatchmentMetrics {
+                        balance_mm: balance,
+                        max_daily_balance_mm: max_balance,
+                        test: folds[2].result(),
+                        trace: traced.then_some(trace),
+                        train: folds[0].result(),
+                        validation: folds[1].result(),
+                    })
                 }),
             ))
         }
@@ -266,7 +312,7 @@ pub fn evaluate(
             let mut store = *initial_m3;
             let mut deficit = 0.0;
             let mut spill_total = 0.0;
-            let (mut streak, mut longest, mut short_days) = (0, 0, 0);
+            let (mut streak, mut longest, mut short_days) = (0_u64, 0_u64, 0_u64);
             let mut max_balance = 0.0_f64;
             let mut trace = Vec::new();
             let threshold = target * capacity_m3;
@@ -306,9 +352,16 @@ pub fn evaluate(
             }
             Ok((
                 deficit + 0.05 * spill_total,
-                work.metrics(|| json!({"shortage_m3":deficit,"spill_m3":spill_total,
-                "shortage_days":short_days,"longest_shortage_days":longest,"max_balance_m3":max_balance,
-                "trace":traced.then_some(trace)})),
+                work.metrics(|| {
+                    Metrics::Reservoir(ReservoirMetrics {
+                        longest_shortage_days: longest,
+                        max_balance_m3: max_balance,
+                        shortage_days: short_days,
+                        shortage_m3: deficit,
+                        spill_m3: spill_total,
+                        trace: traced.then_some(trace),
+                    })
+                }),
             ))
         }
     }
