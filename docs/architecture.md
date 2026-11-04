@@ -189,6 +189,8 @@ keeps its four requested workers on this 2-vCPU host. Matrix rows compare
 0.2.0 lean scores with 0.3.0 matrix calls, because 0.2.0 has no matrix
 API. Outputs of both binaries are byte-identical for every workload.
 
+Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
+
 | Workload | Case | 0.2.0 ms | 0.3.0 ms | 0.2.0 / 0.3.0 |
 | --- | --- | ---: | ---: | ---: |
 | `one` | Single full record (90 days) | 0.005 | 0.003 | 1.55x |
@@ -211,6 +213,8 @@ Median microseconds of 201 calls per row from `examples/breakdown.rs`
 Decode covers candidates and budget; evaluate covers validation,
 dispatch, the domain kernels and record assembly; encode is the result
 JSON. Matrix rows are whole `score_matrix` calls.
+
+Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
 
 | Workload | API | Candidates | Decode us | Evaluate us | Encode us | Total us | Per candidate us |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -247,6 +251,8 @@ Median microseconds per call through the installed wheels on CPU 0
 and [`-v020.json`](../evidence/performance-0.3.0/python-call-costs-v020.json)).
 The 90-day packaged example, one worker.
 
+Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
+
 | Call | 0.2.0 us | 0.3.0 us |
 | --- | ---: | ---: |
 | `evaluate(x)` (one full record) | 19.27 | 16.15 |
@@ -267,6 +273,8 @@ spends about 75 us natively and about 210 us in Python, while
 Median milliseconds of 7 alternating samples with `CRAFT_WORKERS`
 overriding each workload's worker count
 ([`worker-scaling.json`](../evidence/performance-0.3.0/worker-scaling.json)).
+
+Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
 
 | Workload | API | 1 worker ms | 2 workers | 3 workers | 4 workers |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -293,6 +301,8 @@ virtual environment with the installed wheel (0.2.0 from `packages/` of
 the 0.2.0 delivery, 0.3.0 built from its sdist). Columns are medians; the
 total median is computed per run
 ([`optimization/runs.json`](../evidence/performance-0.3.0/optimization/runs.json)).
+
+Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12.3.
 
 | Configuration | Prepare ms | Search ms | Replay ms | Total ms | Search range ms | v0.2.0-full / total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
