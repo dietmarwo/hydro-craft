@@ -157,3 +157,14 @@ and the catchment about 3x faster per day.
 - Expected: a micro-benchmark of the specialized kernel ran 4.1 ns per
   candidate-day at eight lanes against 7.1 ns for the current four-lane
   kernel, so about 1.4x on the lean call.
+
+## Round 9: sixteen lanes for lean reservoir scoring
+
+- Change: lean reservoir groups run sixteen interleaved lanes (then 8,
+  4 and 1); full records keep at most eight lanes. Engine groups grow
+  to sixteen reservoir candidates. The shared `reservoir_day` step is
+  unchanged, so results stay bit-identical.
+- Workload: lean `domain2` (48 reservoir scores of 2,400 days), round 8
+  before.
+- Expected: an exploratory build with sixteen lanes ran the lean call
+  in about 0.39 ms against 0.51 ms, so about 1.3x.

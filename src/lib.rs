@@ -813,7 +813,7 @@ mod tests {
     fn assert_lanes_match_scalar(model: &Value, rows: &[Value]) {
         let prepared = Prepared::new(&model.to_string()).unwrap();
         let days = domain::steps(&prepared.model);
-        for count in [2, 3, 5, 8, 9, 13, 17, rows.len()] {
+        for count in [2, 3, 5, 8, 9, 13, 17, 33, rows.len()] {
             let candidates: Vec<_> = (0..count)
                 .map(|i| {
                     json!({"id": format!("c{i}"), "parameters": rows[i % rows.len()],

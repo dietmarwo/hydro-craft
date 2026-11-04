@@ -426,7 +426,7 @@ pub fn group_width(model: &Model) -> usize {
 }
 
 const CATCHMENT_LANES: usize = 8;
-const RESERVOIR_LANES: usize = 8;
+const RESERVOIR_LANES: usize = 16;
 
 /// Evaluate untraced candidates together over the shared daily inputs.
 ///
@@ -504,13 +504,17 @@ pub fn evaluate_lanes(
             }
             let mut rest = valid.as_slice();
             while !rest.is_empty() {
+                // Lean runs use up to sixteen lanes; full records, with more
+                // state per lane, use up to eight.
                 let width = match rest.len() {
+                    16.. if !metrics => 16,
                     8.. => 8,
                     4.. => 4,
                     _ => 1,
                 };
                 let (chunk, tail) = rest.split_at(width);
                 let states = match (width, metrics) {
+                    (16, _) => reservoir_lanes::<16, false>(&site, *initial_m3, inputs, chunk),
                     (8, false) => reservoir_lanes::<8, false>(&site, *initial_m3, inputs, chunk),
                     (8, true) => reservoir_lanes::<8, true>(&site, *initial_m3, inputs, chunk),
                     (4, false) => reservoir_lanes::<4, false>(&site, *initial_m3, inputs, chunk),
