@@ -1,0 +1,19 @@
+evaluations 10164 in 0.25 s; statuses {'invalid': 198, 'complete': 9966}
+best train RMSE 0.20084 mm/day
+
+parameter        found     truth  unit
+capacity      204.3582  180.0000  mm
+exponent        2.5028    2.2000  -
+lp              0.7347    0.7000  -
+kfast           0.2616    0.2500  1/day
+kbase           0.0303    0.0300  1/day
+percolation     2.5216    2.5000  mm/day
+degree          3.5013    3.5000  mm/(degC day)
+
+fold         RMSE found  RMSE truth  bias found  bias truth
+train            0.2008      0.2048       -5.08        2.56
+validation       0.2444      0.2397        2.59        4.35
+test             0.0431      0.0378       -2.30        0.35
+
+Select on train, check validation, report test once. The noise in the
+synthetic observations limits how closely any parameter set can fit.
