@@ -1,4 +1,9 @@
-"""Check the installed lean API and run the Python snippets in the tutorial."""
+"""Check the installed lean and matrix APIs and run the Python snippets in the docs.
+
+Usage: release_checks.py MODULE TUTORIAL [MANUAL]. MANUAL defaults to
+user-manual.md next to TUTORIAL. Each document's Python blocks run in
+order in one namespace per document.
+"""
 
 import importlib
 import json
@@ -7,7 +12,8 @@ import re
 import sys
 from tempfile import TemporaryDirectory
 
-module, tutorial = sys.argv[1:]
+module, tutorial, *rest = sys.argv[1:]
+manual = rest[0] if rest else str(Path(tutorial).with_name("user-manual.md"))
 package = importlib.import_module(module)
 example = package.load_example()
 prepared = package.Prepared(example["model"])
@@ -76,10 +82,17 @@ except ValueError:
 else:
     raise AssertionError("scores accepted a traced candidate")
 
-snippets = re.findall(r"^```python\n(.*?)^```", Path(tutorial).read_text(), re.M | re.S)
-assert len(snippets) >= 4
-namespace = {}
-for i, snippet in enumerate(snippets, 1):
-    exec(compile(snippet, f"tutorial-{i}", "exec"), namespace)
-print(json.dumps({"status": "passed", "tutorial_python_blocks": len(snippets),
+def run_blocks(path, label, minimum):
+    snippets = re.findall(r"^```python\n(.*?)^```", Path(path).read_text(), re.M | re.S)
+    assert len(snippets) >= minimum, (path, len(snippets))
+    namespace = {}
+    for i, snippet in enumerate(snippets, 1):
+        exec(compile(snippet, f"{label}-{i}", "exec"), namespace)
+    return len(snippets)
+
+
+tutorial_blocks = run_blocks(tutorial, "tutorial", 4)
+manual_blocks = run_blocks(manual, "manual", 15) if Path(manual).exists() else 0
+print(json.dumps({"status": "passed", "tutorial_python_blocks": tutorial_blocks,
+                  "manual_python_blocks": manual_blocks,
                   "lean_api_and_budget_parity": True, "matrix_api_parity": True}))

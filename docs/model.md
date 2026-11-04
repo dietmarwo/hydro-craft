@@ -6,8 +6,8 @@ comparison must match its update order, initial stores and parameter map.
 
 Forcing is one row per consecutive day. Precipitation, potential
 evapotranspiration and observations are depth in mm per day, temperature
-is in degrees Celsius and area is in square kilometres. A missing
-observation is JSON null. Discharge in cubic metres per second is
+is in degrees Celsius and area is in square kilometers. A missing
+observation is JSON null. Discharge in cubic meters per second is
 runoff depth times area times 1,000 divided by 86,400.
 
 The parameter vector is soil capacity, recharge exponent, evaporation
@@ -21,7 +21,7 @@ runoff. The per-step balance is exposed. Warm-up forcing is simulated
 before scoring. Training RMSE is the objective, and validation and test
 metrics remain separate.
 
-The reservoir runs in cubic metres with one record per day. The rule
+The reservoir runs in cubic meters with one record per day. The rule
 decides discretionary release from previous storage. Realized inflow,
 evaporation, demand withdrawal, discretionary release and spill are
 applied in that order. Available outlet capacity and reserve constrain

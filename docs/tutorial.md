@@ -1,6 +1,7 @@
 # Hydro Craft tutorial
 
-Calibrate a synthetic HBV-style daily catchment and compare non-anticipatory policies for one reservoir. This guide uses the examples shipped with version 0.2.0.
+Calibrate a synthetic HBV-style daily catchment and compare non-anticipatory policies for one reservoir. This guide uses the examples shipped with version 0.3.0. The
+[user manual](user-manual.md) is the complete reference.
 
 ## 1. Install and run the example
 
@@ -15,7 +16,7 @@ python -m pip install --no-deps packages/*.whl
 ```
 
 If the wheel tag is incompatible, build the supplied Rust/Python source
-on the target system with Rust 1.88+ and Maturin 1.9.6. Cargo needs the
+on the target system with Rust 1.88+ and maturin 1.9.6. Cargo needs the
 locked dependencies available from its registry or cache.
 
 ```sh
@@ -112,18 +113,38 @@ It rejects any candidate with `trace: true`. A one-worker batch or a
 singleton runs inline. Larger batches can try two or four workers.
 Measure before setting a worker count for a real workload.
 
+Inside an optimizer, score whole populations without JSON. `score_matrix`
+takes a list of equal-length parameter rows or a 2-D NumPy array and
+returns three lists; scores are NaN for every row that is not complete.
+
+```python
+rows = [case["parameters"], [1.0, 2.0], case["parameters"]]
+try:
+    prepared.score_matrix(rows)
+except ValueError as error:
+    print("ragged rows are rejected:", error)
+rows = [case["parameters"], case["parameters"][:4] + [0.35] + case["parameters"][5:]]
+scores, statuses, steps = prepared.score_matrix(rows, workers=1)
+print(scores, statuses, steps)
+assert scores[0] == replay["score"]
+```
+
 The optional differential-evolution driver times preparation, seeded
 search and traced replay as one run. Install SciPy for this example.
 
 ```sh
 python -m pip install scipy
+python validation/optimize_performance.py hydro_craft --matrix
 python validation/optimize_performance.py hydro_craft --scores
 python validation/optimize_performance.py hydro_craft
 ```
 
-The driver uses small local bounds and a short fixed search budget.
-For a scientific result, use problem-specific bounds, an explicit
-feasibility penalty or constraint policy, and a held-out evaluation.
+The driver uses small local bounds and a short fixed search budget; all
+three modes give the same evaluations, failures and result. For a
+scientific result, use problem-specific bounds, an explicit feasibility
+penalty or constraint policy, and a held-out evaluation. The
+[examples](../examples/python/README.md) show complete SciPy and fcmaes
+searches with graded penalties.
 
 ## 4. Run and resume a local campaign
 
@@ -148,8 +169,10 @@ cargo build --release --locked --bins --examples
 target/release/hydro-craft describe
 target/release/hydro-craft run models/request.json
 target/release/examples/sweep models/example.json
+target/release/examples/matrix
 target/release/examples/performance models/example.json serial
 CRAFT_SCORES=1 target/release/examples/performance models/example.json serial
+CRAFT_MATRIX=1 target/release/examples/performance models/example.json serial
 ```
 
 The CLI reads a request file or standard input with `run -`. Exit code
@@ -158,19 +181,25 @@ indicates one or more unsuccessful rows in a well-formed request.
 The benchmark prints elapsed seconds per prepared batch after warm-up.
 Use `parallel` for four workers, `trace` for traced evaluations,
 or `domain` and `domain2` for the package's supplemental cases.
+`CRAFT_SCORES=1` selects lean scores, `CRAFT_MATRIX=1` the matrix API and
+`CRAFT_WORKERS=N` overrides the worker count.
 With a previous benchmark executable built from the baseline and this
 one, `validation/performance_pair.py BEFORE AFTER models/example.json serial`
-checks output parity and times both. See the included performance log
-and raw evidence for the exact workloads and comparison boundaries.
+checks output parity and times both; `--before-scores`, `--after-scores`,
+`--before-matrix` and `--after-matrix` choose the API per side. See the
+included performance logs and raw evidence for the exact workloads and
+comparison boundaries.
 
 ## 6. Verify results
 
 ```sh
 cargo test --release --locked
-cargo clippy --locked --all-targets --features python -- -D warnings
+PYO3_PYTHON=python3 cargo clippy --release --locked --all-targets --features python -- -D warnings
 python validation/validate.py target/release/hydro-craft
 ```
 
-Consult the [model card](model.md) for supported inputs, the
-[architecture guide](architecture.md) for data flow and numerical
-assumptions, and the [source notes](sources.md) for references.
+Consult the [user manual](user-manual.md) for the full reference, the
+[model card](model.md) for supported inputs, the
+[architecture guide](architecture.md) for data flow, numerical
+assumptions and performance, and the [source notes](sources.md) for
+references.
