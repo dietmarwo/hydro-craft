@@ -1,10 +1,12 @@
 [package]
 name = "hydro-craft"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Bounded hydro-craft research evaluator"
 license = "MIT"
+# Release artifacts and patch series ship in the ZIP, not in the crate or sdist.
+exclude = ["/packages/", "/patches/", "/dist/"]
 
 [lib]
 crate-type = ["rlib", "cdylib"]
