@@ -11,6 +11,12 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 python = ["dep:pyo3", "pyo3/extension-module"]
+# Exposes Prepared::profile_json for examples/breakdown.rs.
+profiling = []
+
+[[example]]
+name = "breakdown"
+required-features = ["profiling"]
 
 [dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }

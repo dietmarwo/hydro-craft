@@ -335,6 +335,30 @@ impl Prepared {
         })
     }
 
+    /// Time one JSON call's phases: candidate and budget decode, evaluation
+    /// with record assembly, and result encoding. Used by the breakdown
+    /// example; not part of the stable API.
+    #[cfg(feature = "profiling")]
+    #[doc(hidden)]
+    pub fn profile_json(
+        &self,
+        candidates: &str,
+        budget: &str,
+        lean: bool,
+    ) -> Result<[Duration; 3], String> {
+        let start = Instant::now();
+        let candidates: Vec<Candidate> =
+            serde_json::from_str(candidates).map_err(|e| e.to_string())?;
+        let budget = serde_json::from_str(budget).map_err(|e| e.to_string())?;
+        let decoded = Instant::now();
+        let batch = self.evaluate(&candidates, budget, !lean)?;
+        let evaluated = Instant::now();
+        let text = serde_json::to_string(&batch).map_err(|e| e.to_string())?;
+        let encoded = Instant::now();
+        std::hint::black_box(text);
+        Ok([decoded - start, evaluated - decoded, encoded - evaluated])
+    }
+
     fn evaluate_encoded(
         &self,
         candidates: Vec<Candidate>,
