@@ -108,3 +108,16 @@ and the catchment about 3x faster per day.
   before.
 - Expected: the micro-benchmark ran four interleaved catchment lanes
   about 3x faster per day than one at exponent 1, so at least 2x.
+
+## Round 7: borrowed IDs and exact-size parameter vectors
+
+- Change: candidate IDs deserialize as `Cow<str>` borrowed from the
+  request text, and parameter arrays are collected in a 64-value stack
+  buffer and copied once into an exactly sized vector, instead of one
+  `String` per ID and a doubling `Vec<f64>`. Longer arrays still parse
+  and are rejected by the existing batch check; error messages match the
+  plain derive.
+- Workload: `invalid` (1,024 full records with 63 parameters each),
+  round 6 before.
+- Expected: a decode micro-benchmark of this shape went from 1.03 ms to
+  0.76 ms, so about 1.2x on the whole call.

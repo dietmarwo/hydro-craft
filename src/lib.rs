@@ -1,10 +1,14 @@
 mod domain;
 mod pool;
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{SeqAccess, Visitor},
+};
 use serde_json::{Value, json, value::RawValue};
 use sha2::{Digest, Sha256};
 use std::{
+    borrow::Cow,
     collections::HashSet,
     ops::Range,
     path::PathBuf,
@@ -38,11 +42,46 @@ pub fn infeasible(detail: impl Into<String>) -> Failure {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Candidate {
-    pub id: String,
+pub struct Candidate<'a> {
+    /// Borrowed from the request text unless the JSON string has escapes.
+    #[serde(borrow)]
+    pub id: Cow<'a, str>,
+    #[serde(deserialize_with = "exact_parameters")]
     pub parameters: Vec<f64>,
     #[serde(default)]
     pub trace: bool,
+}
+
+/// Deserialize a parameter array into a vector allocated once at its exact
+/// length. Values are collected in a stack buffer of the 64-value limit
+/// first; longer arrays continue on the heap and are rejected later by the
+/// batch checks, as before. Element errors are those of `Vec<f64>`.
+fn exact_parameters<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error> {
+    struct Exact;
+    impl<'de> Visitor<'de> for Exact {
+        type Value = Vec<f64>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a sequence")
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<f64>, A::Error> {
+            let mut buffer = [0.0_f64; DIMENSION_LIMIT];
+            let mut len = 0;
+            while let Some(value) = seq.next_element::<f64>()? {
+                if len == DIMENSION_LIMIT {
+                    let mut long = buffer.to_vec();
+                    long.push(value);
+                    while let Some(value) = seq.next_element::<f64>()? {
+                        long.push(value);
+                    }
+                    return Ok(long);
+                }
+                buffer[len] = value;
+                len += 1;
+            }
+            Ok(buffer[..len].to_vec())
+        }
+    }
+    deserializer.deserialize_seq(Exact)
 }
 
 #[derive(Deserialize)]
@@ -361,7 +400,7 @@ impl Prepared {
 
     fn evaluate_encoded(
         &self,
-        candidates: Vec<Candidate>,
+        candidates: Vec<Candidate<'_>>,
         budget: Budget,
         metrics_enabled: bool,
     ) -> Result<String, String> {
@@ -389,7 +428,7 @@ impl Prepared {
         (result, work.used)
     }
 
-    fn record(c: &Candidate, result: Evaluation, steps: u64) -> Record<'_> {
+    fn record<'a>(c: &'a Candidate<'_>, result: Evaluation, steps: u64) -> Record<'a> {
         match result {
             Ok((score, metrics)) => Record {
                 id: &c.id,
@@ -412,7 +451,7 @@ impl Prepared {
 
     fn evaluate<'a>(
         &'a self,
-        candidates: &'a [Candidate],
+        candidates: &'a [Candidate<'_>],
         budget: Budget,
         metrics_enabled: bool,
     ) -> Result<Batch<'a>, String> {
@@ -453,10 +492,11 @@ impl Prepared {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Request {
+struct Request<'a> {
     schema: String,
     model: Box<RawValue>,
-    candidates: Vec<Candidate>,
+    #[serde(borrow)]
+    candidates: Vec<Candidate<'a>>,
     #[serde(default)]
     budget: Budget,
 }
@@ -856,5 +896,65 @@ mod tests {
             }
         }
         assert_lanes_match_scalar(&cold, &rows);
+    }
+
+    /// Borrowed IDs and exact-size parameters decode like the plain derive
+    /// of 0.2.0, including every error message.
+    #[test]
+    fn candidate_decoding_matches_plain_derive() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[allow(dead_code)]
+        struct Plain {
+            id: String,
+            parameters: Vec<f64>,
+            #[serde(default)]
+            trace: bool,
+        }
+        let long: Vec<f64> = (0..70).map(f64::from).collect();
+        for text in [
+            r#"[{"id":"a","parameters":[1,2.5,-0,-0.0,1e300]}]"#.to_string(),
+            r#"[{"id":"a\"b","parameters":[],"trace":true}]"#.to_string(),
+            json!([{"id":"x","parameters":long}]).to_string(),
+            r#"[{"id":"a","parameters":"x"}]"#.to_string(),
+            r#"[{"id":"a","parameters":null}]"#.to_string(),
+            r#"[{"id":"a","parameters":{}}]"#.to_string(),
+            r#"[{"id":"a","parameters":[1,"b"]}]"#.to_string(),
+            r#"[{"id":"a","parameters":[1,]}]"#.to_string(),
+            r#"[{"id":"a","parameters":[1e999]}]"#.to_string(),
+            r#"[{"id":"a"}]"#.to_string(),
+            r#"[{"id":7,"parameters":[]}]"#.to_string(),
+            r#"[{"id":"a","parameters":[],"extra":1}]"#.to_string(),
+            r#"[{"id":"a","parameters":[],"parameters":[]}]"#.to_string(),
+        ] {
+            let ours = serde_json::from_str::<Vec<Candidate>>(&text);
+            let plain = serde_json::from_str::<Vec<Plain>>(&text);
+            match (ours, plain) {
+                (Ok(ours), Ok(plain)) => {
+                    for (a, b) in ours.iter().zip(&plain) {
+                        assert_eq!(a.id, b.id);
+                        assert_eq!(a.trace, b.trace);
+                        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                        assert_eq!(bits(&a.parameters), bits(&b.parameters), "{text}");
+                        if a.parameters.len() <= DIMENSION_LIMIT {
+                            assert_eq!(a.parameters.capacity(), a.parameters.len());
+                        }
+                    }
+                }
+                (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string(), "{text}"),
+                _ => panic!("decoders disagree on {text}"),
+            }
+        }
+        let example = fixture();
+        let prepared = Prepared::new(&example["model"].to_string()).unwrap();
+        let escaped = r#"[{"id":"a","parameters":[]},{"id":"a","parameters":[]}]"#;
+        assert!(prepared.scores_json(escaped, "{}").is_err());
+        let limit = json!([{"id":"x","parameters":vec![1.0; 64]}]).to_string();
+        assert!(prepared.scores_json(&limit, "{}").is_ok());
+        let over = json!([{"id":"x","parameters":vec![1.0; 65]}]).to_string();
+        assert_eq!(
+            prepared.scores_json(&over, "{}").unwrap_err(),
+            "invalid or duplicate candidate id, or parameter vector exceeds limit"
+        );
     }
 }
