@@ -1,0 +1,1 @@
+{"mode": "full", "total_seconds": 0.01169733200003975, "prepare_seconds": 0.00041833999966911506, "search_seconds": 0.010947472999760066, "replay_seconds": 0.0003315190006105695, "evaluations": 168, "failures": 72, "best": [10.0, 1.0, 1.0, 0.5, 0.3, 2.0, 3.0], "score": 4.965068306494546e-16}

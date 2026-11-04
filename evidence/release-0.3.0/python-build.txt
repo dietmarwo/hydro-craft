@@ -1,0 +1,8 @@
+$ maturin sdist --out DIST
+📦 Built source distribution to DIST/hydro_craft-0.3.0.tar.gz
+$ tar -xzf hydro_craft-0.3.0.tar.gz && cd hydro_craft-0.3.0 && maturin build --release --locked --out DIST -i /usr/bin/python3.12
+📡 Using build options features from pyproject.toml
+    Finished `release` profile [optimized] target(s) in 21.87s
+📦 Built wheel for abi3 Python ≥ 3.10 to DIST/hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl
+ac9b21ccbb1c81937c84e1090e89eee05778b804e301909bf5fd68573510d549  hydro_craft-0.3.0.tar.gz
+e4f132c365f1e06d002584b9cf19f89c867ead707deb8ef3a4aa0dbb65f7927b  hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl

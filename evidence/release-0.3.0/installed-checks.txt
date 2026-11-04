@@ -1,0 +1,37 @@
+# hydro-craft 0.3.0 installed-package release checks
+
+Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz, Rust 1.97.0,
+CPython 3.12.3. Every step ran inside the shared CPU lock, from a working
+directory outside the source tree, with the wheel built from the
+extracted sdist (see python-build.txt) installed into a fresh venv
+together with numpy 2.3.5, scipy 1.17.0 and fcmaes 2.1.0.
+
+- import check: hydro_craft 0.3.0 loaded from the venv's site-packages.
+- validation/installed.py hydro_craft: passed; output in
+  evidence/installed.json (cancellation and resume retained 21 attempts
+  and recovered 12 completed rows; workers 1 and 4 replayed the same
+  records in reverse order).
+- validation/release_checks.py hydro_craft docs/tutorial.md: passed;
+  lean/full/matrix parity for {}, workers 4, max_steps 1 and a cancel
+  file, NumPy input and rejected shapes, 5 tutorial and 17 manual Python
+  blocks; output in evidence/tutorial-check.json.
+- validation/run_campaign.py twice against one SQLite database: the two
+  manifest outputs were byte-identical (cmp); the first is
+  evidence/campaign-replay.json.
+- validation/optimize_performance.py hydro_craft: 168 evaluations, 72
+  failures, replay score 4.965068306494546e-16; evidence/scipy-search.json.
+- all six examples/python scripts exited 0; their outputs equal the saved
+  examples/python/outputs files apart from timing values.
+- The release wheel's files are byte-identical to those of the wheel
+  built earlier from the version-bump sdist, which produced the Python
+  optimization timings, call costs and example outputs (only the zip
+  container differs). _native.abi3.so SHA-256: cdaafc08b607b1d787e56ad491b6202318cae6fe9c51fe85dcf3bede57beef0d
+- The user manual's shell install commands ran in a scratch directory
+  with python3.12 against the packaged files: venv plus the wheel,
+  numpy/scipy/fcmaes from PyPI, and maturin 1.9.6 building the wheel from
+  the extracted sdist, which then scored the packaged example.
+- These checks ran twice: once with the packages built at commit 1fa20d9
+  and again, after a documentation-only commit labeled the architecture
+  tables, with the final packages in packages/. Both runs passed; the
+  files inside the two wheels are byte-identical, and the evidence files
+  here come from the second run.
