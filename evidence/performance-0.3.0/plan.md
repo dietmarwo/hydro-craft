@@ -47,3 +47,16 @@ and the catchment about 3x faster per day.
   `scores_json` before, matrix after.
 - Expected: the profile shows about 44 us decode and 19 us encode around
   about 240 us of evaluation, so about 1.2x.
+
+## Round 2: persistent worker pool
+
+- Change: replace per-batch `std::thread::scope` workers with helper
+  threads that persist for the process and wait on a condition
+  variable. The calling thread evaluates its own batch together with up
+  to `workers - 1` helpers through the same atomic index and per-index
+  result slots, so record order and per-candidate results are unchanged.
+  A forked child gets a fresh pool.
+- Workload: `parallel` (96 full records, four workers on the 2-vCPU
+  host), round 1 before, round 2 after.
+- Expected: thread creation and join cost 100-430 us per batch here,
+  against roughly 0.4 ms of serial work, so at least 2x.

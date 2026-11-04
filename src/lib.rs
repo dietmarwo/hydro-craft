@@ -1,4 +1,5 @@
 mod domain;
+mod pool;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, value::RawValue};
@@ -165,25 +166,22 @@ fn check_budget(budget: &Budget) -> Result<(), String> {
     Ok(())
 }
 
-/// Run `f` for every index in `0..count`, inline or on scoped workers, and
-/// return the results in index order.
+/// Run `f` for every index in `0..count`, inline or on up to `workers`
+/// concurrent evaluators from the persistent pool, and return the results in
+/// index order.
 fn dispatch<T: Send + Sync>(count: usize, workers: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
     if workers == 1 || count == 1 {
         return (0..count).map(f).collect();
     }
     let next = AtomicUsize::new(0);
     let slots: Vec<_> = (0..count).map(|_| OnceLock::new()).collect();
-    std::thread::scope(|scope| {
-        for _ in 0..workers.min(count) {
-            scope.spawn(|| {
-                loop {
-                    let index = next.fetch_add(1, Ordering::Relaxed);
-                    if index >= count {
-                        break;
-                    }
-                    assert!(slots[index].set(f(index)).is_ok(), "duplicate work index");
-                }
-            });
+    pool::run(workers.min(count) - 1, &|| {
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            if index >= count {
+                break;
+            }
+            assert!(slots[index].set(f(index)).is_ok(), "duplicate work index");
         }
     });
     slots
