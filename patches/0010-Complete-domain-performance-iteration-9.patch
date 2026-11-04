@@ -1,0 +1,50 @@
+From d65159e110765772af00f7aff7e0bde975888678 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:54:35 +0100
+Subject: [PATCH 10/12] Complete domain performance iteration 9
+
+---
+ src/domain.rs | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/src/domain.rs b/src/domain.rs
+index 36fbf4e..d419103 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -177,6 +177,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+             let mut balance = 0.0_f64;
+             let mut max_balance = 0.0_f64;
+             let mut trace = Vec::new();
++            let evap_scale = lp * capacity;
+             for d in forcing {
+                 work.step()?;
+                 let before = snow + soil + upper + lower;
+@@ -188,11 +189,23 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+                     snow -= melt;
+                     d.precipitation_mm + melt
+                 };
+-                let recharge = liquid * (soil / capacity).powf(exponent);
++                let recharge = if liquid == 0.0 {
++                    0.0
++                } else {
++                    let moisture = soil / capacity;
++                    let fraction = if exponent == 1.0 {
++                        moisture
++                    } else if exponent == 2.0 {
++                        moisture * moisture
++                    } else {
++                        moisture.powf(exponent)
++                    };
++                    liquid * fraction
++                };
+                 soil += liquid - recharge;
+                 let overflow = (soil - capacity).max(0.0);
+                 soil -= overflow;
+-                let evap = soil.min(d.pet_mm * (soil / (lp * capacity)).min(1.0));
++                let evap = soil.min(d.pet_mm * (soil / evap_scale).min(1.0));
+                 soil -= evap;
+                 upper += recharge + overflow;
+                 let transfer = upper.min(percolation);
+-- 
+2.51.1
+

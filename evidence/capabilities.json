@@ -1,0 +1,1 @@
+{"batch":true,"models":["synthetic_daily_hbv_style","masked_runoff_calibration","one_reservoir"],"schema":"hydro-craft.capabilities/0.1","version":"0.2.0","worker_limit":64}

@@ -1,0 +1,109 @@
+From 704b961fa38f6e3959b3371fcbcf85735ecaea89 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:52:32 +0100
+Subject: [PATCH 09/12] Prepare daily observation fold indexes
+
+---
+ src/domain.rs | 47 ++++++++++++++++++++++++-----------------------
+ 1 file changed, 24 insertions(+), 23 deletions(-)
+
+diff --git a/src/domain.rs b/src/domain.rs
+index 3af6218..36fbf4e 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -30,6 +30,8 @@ pub enum Model {
+ #[serde(deny_unknown_fields)]
+ pub struct Day {
+     day: u32,
++    #[serde(skip)]
++    fold: u8,
+     precipitation_mm: f64,
+     pet_mm: f64,
+     temperature_c: f64,
+@@ -47,8 +49,8 @@ fn bounded(value: f64, max: f64) -> bool {
+     (0.0..=max).contains(&value)
+ }
+ 
+-pub fn prepare(model: Model) -> Result<Model, String> {
+-    match &model {
++pub fn prepare(mut model: Model) -> Result<Model, String> {
++    match &mut model {
+         Model::Catchment {
+             area_km2,
+             forcing,
+@@ -74,14 +76,24 @@ pub fn prepare(model: Model) -> Result<Model, String> {
+             {
+                 return Err("invalid daily forcing, units, fold or catchment area".into());
+             }
+-            for range in [
++            let end = forcing.len();
++            for (fold, range) in [
+                 *warmup..*train_end,
+                 *train_end..*validation_end,
+-                *validation_end..forcing.len(),
+-            ] {
+-                if !forcing[range].iter().any(|d| d.observed_mm.is_some()) {
++                *validation_end..end,
++            ]
++            .into_iter()
++            .enumerate()
++            {
++                if !forcing[range.clone()]
++                    .iter()
++                    .any(|d| d.observed_mm.is_some())
++                {
+                     return Err("every scored fold needs observed data".into());
+                 }
++                for day in &mut forcing[range] {
++                    day.fold = (fold + 1) as u8;
++                }
+             }
+         }
+         Model::Reservoir {
+@@ -141,11 +153,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+     }
+     match model {
+         Model::Catchment {
+-            area_km2,
+-            forcing,
+-            warmup,
+-            train_end,
+-            validation_end,
++            area_km2, forcing, ..
+         } => {
+             let &[capacity, exponent, lp, kfast, kbase, percolation, degree] =
+                 candidate.parameters.as_slice()
+@@ -169,7 +177,7 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+             let mut balance = 0.0_f64;
+             let mut max_balance = 0.0_f64;
+             let mut trace = Vec::new();
+-            for (i, d) in forcing.iter().enumerate() {
++            for d in forcing {
+                 work.step()?;
+                 let before = snow + soil + upper + lower;
+                 let liquid = if d.temperature_c <= 0.0 {
+@@ -199,17 +207,10 @@ pub fn evaluate(model: &Model, candidate: &Candidate, work: &mut Work<'_>) -> Ev
+                     before + d.precipitation_mm - evap - runoff - (snow + soil + upper + lower);
+                 balance += residual;
+                 max_balance = max_balance.max(residual.abs());
+-                if i >= *warmup {
+-                    let fold = if i < *train_end {
+-                        0
+-                    } else if i < *validation_end {
+-                        1
+-                    } else {
+-                        2
+-                    };
+-                    if let Some(y) = d.observed_mm {
+-                        folds[fold].record(runoff, y);
+-                    }
++                if d.fold != 0
++                    && let Some(y) = d.observed_mm
++                {
++                    folds[usize::from(d.fold - 1)].record(runoff, y);
+                 }
+                 if candidate.trace {
+                     trace.push(json!({"day":d.day,"runoff_mm":runoff,
+-- 
+2.51.1
+
