@@ -6,7 +6,11 @@ build-backend = "maturin"
 name = "hydro-craft"
 version = "0.3.0"
 requires-python = ">=3.10"
-description = "Prepared hydro-craft research evaluations"
+description = "Python API for a Rust hydrology evaluator: synthetic HBV-style daily catchment and one-reservoir release rules for optimization studies"
+keywords = ["hydrology", "HBV model", "rainfall-runoff", "reservoir operation", "water resources", "simulation", "optimization", "Rust"]
+
+[project.urls]
+Repository = "https://github.com/dietmarwo/hydro-craft"
 
 [tool.maturin]
 module-name = "hydro_craft._native"

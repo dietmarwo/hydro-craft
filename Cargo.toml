@@ -3,8 +3,11 @@ name = "hydro-craft"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Bounded hydro-craft research evaluator"
+description = "Hydrology evaluator: synthetic HBV-style daily catchment and one-reservoir release rules, with a versioned JSON CLI for optimization studies"
 license = "MIT"
+repository = "https://github.com/dietmarwo/hydro-craft"
+keywords = ["hydrology", "hbv", "rainfall-runoff", "reservoir", "simulation"]
+categories = ["science::geo", "simulation"]
 # Release artifacts and patch series ship in the ZIP, not in the crate or sdist.
 exclude = ["/packages/", "/patches/", "/dist/", "/SHA256SUMS", "/docs/images/"]
 
