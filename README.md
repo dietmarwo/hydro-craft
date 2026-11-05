@@ -1,3 +1,5 @@
+![hydro-craft — catchments and reservoir policies](docs/images/banner.png)
+
 # hydro-craft 0.3.0
 
 A bounded research evaluator for a synthetic HBV-style daily catchment and

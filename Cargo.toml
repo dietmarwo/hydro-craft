@@ -6,7 +6,7 @@ rust-version = "1.88"
 description = "Bounded hydro-craft research evaluator"
 license = "MIT"
 # Release artifacts and patch series ship in the ZIP, not in the crate or sdist.
-exclude = ["/packages/", "/patches/", "/dist/", "/SHA256SUMS"]
+exclude = ["/packages/", "/patches/", "/dist/", "/SHA256SUMS", "/docs/images/"]
 
 [lib]
 crate-type = ["rlib", "cdylib"]
