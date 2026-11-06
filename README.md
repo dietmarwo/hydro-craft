@@ -2,6 +2,8 @@
 
 # hydro-craft 0.3.0
 
+> **One of 18 related repositories.** The [repository overview](https://github.com/dietmarwo/fcmaes-rust/blob/main/docs/repositories.md) shows what each one does and how they connect.
+
 A bounded research evaluator for a synthetic HBV-style daily catchment and
 a one-reservoir release rule. See the [user manual](docs/user-manual.md)
 for installation, the complete model reference and every API, the
