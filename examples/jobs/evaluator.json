@@ -1,0 +1,35 @@
+{
+  "schema": "domain-evaluator.tutorial/0.1",
+  "name": "hydro-craft",
+  "module": "hydro_craft",
+  "cli": {
+    "binary": "hydro-craft",
+    "request": "models/request.json"
+  },
+  "case": "examples/jobs/case.json",
+  "optimize": "examples/jobs/optimize.py",
+  "wheel": "packages/hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+  "presets": {
+    "smoke": {
+      "evals": 400,
+      "seeds": [
+        1,
+        2
+      ]
+    },
+    "study": {
+      "evals": 20000,
+      "seeds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  },
+  "optimizers": [
+    "cmaes",
+    "de"
+  ]
+}

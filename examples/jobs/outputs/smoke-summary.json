@@ -1,0 +1,452 @@
+{
+  "evaluation": {
+    "all_complete": true,
+    "cli_exit": 0,
+    "records": 1,
+    "stderr": ""
+  },
+  "evaluator": "hydro-craft",
+  "passed": true,
+  "preset": "smoke",
+  "runs": [
+    {
+      "best": {
+        "budget": 400,
+        "evaluations": 400,
+        "evaluator": "hydro-craft",
+        "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+        "optimizer": "cmaes",
+        "parameters": [
+          225.5153709282916,
+          2.4854051051016373,
+          0.7672167487462155,
+          0.27371997529991743,
+          0.031179275972866544,
+          2.3956273999616498,
+          3.4983785998154633
+        ],
+        "schema": "domain-evaluator.search/0.1",
+        "score": 0.21255579079978187,
+        "seed": 1,
+        "status": "complete",
+        "statuses": {
+          "complete": 399,
+          "invalid": 1
+        },
+        "steps": 582540,
+        "termination": "evaluation_budget"
+      },
+      "checks": {
+        "cli_status": {
+          "nominal": {
+            "all_complete": true,
+            "cli_exit": 0,
+            "records": 1,
+            "stderr": ""
+          }
+        },
+        "metrics": {
+          "test_rmse_mm": 0.0492698533279549,
+          "train_rmse_mm": 0.21255579079978187,
+          "validation_rmse_mm": 0.26036385276169366
+        },
+        "model_hashes": {
+          "nominal": {
+            "cli": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+            "expected": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197"
+          }
+        },
+        "model_replayed": true,
+        "passed": true,
+        "records": {
+          "nominal": {
+            "detail": null,
+            "id": "winner",
+            "metrics": {
+              "balance_mm": 1.4779288903810084e-12,
+              "max_daily_balance_mm": 1.1368683772161603e-13,
+              "test": {
+                "observations": 172,
+                "rmse_mm": 0.0492698533279549,
+                "volume_bias_mm": 3.035512310596518
+              },
+              "trace": null,
+              "train": {
+                "observations": 687,
+                "rmse_mm": 0.21255579079978187,
+                "volume_bias_mm": 11.112199380685306
+              },
+              "validation": {
+                "observations": 172,
+                "rmse_mm": 0.26036385276169366,
+                "volume_bias_mm": 5.893821372617275
+              }
+            },
+            "score": 0.21255579079978187,
+            "status": "complete",
+            "steps": 1460
+          }
+        },
+        "scope": "Synthetic HBV catchment only. Train selects parameters; validation selects an arm; test is a final descriptive check, never a search signal.",
+        "score_replayed": true,
+        "search": {
+          "budget": 400,
+          "evaluations": 400,
+          "evaluator": "hydro-craft",
+          "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+          "optimizer": "cmaes",
+          "parameters": [
+            225.5153709282916,
+            2.4854051051016373,
+            0.7672167487462155,
+            0.27371997529991743,
+            0.031179275972866544,
+            2.3956273999616498,
+            3.4983785998154633
+          ],
+          "schema": "domain-evaluator.search/0.1",
+          "score": 0.21255579079978187,
+          "seed": 1,
+          "status": "complete",
+          "statuses": {
+            "complete": 399,
+            "invalid": 1
+          },
+          "steps": 582540,
+          "termination": "evaluation_budget"
+        }
+      },
+      "id": "cmaes-1",
+      "passed": true
+    },
+    {
+      "best": {
+        "budget": 400,
+        "evaluations": 400,
+        "evaluator": "hydro-craft",
+        "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+        "optimizer": "cmaes",
+        "parameters": [
+          263.0055338433503,
+          2.5233420589866187,
+          0.7951661948264621,
+          0.2896840468541008,
+          0.039472540701132236,
+          2.5357667334417577,
+          3.525480196713928
+        ],
+        "schema": "domain-evaluator.search/0.1",
+        "score": 0.24756027193078642,
+        "seed": 2,
+        "status": "complete",
+        "statuses": {
+          "complete": 400
+        },
+        "steps": 584000,
+        "termination": "evaluation_budget"
+      },
+      "checks": {
+        "cli_status": {
+          "nominal": {
+            "all_complete": true,
+            "cli_exit": 0,
+            "records": 1,
+            "stderr": ""
+          }
+        },
+        "metrics": {
+          "test_rmse_mm": 0.05732688423270048,
+          "train_rmse_mm": 0.24756027193078642,
+          "validation_rmse_mm": 0.30277234727278923
+        },
+        "model_hashes": {
+          "nominal": {
+            "cli": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+            "expected": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197"
+          }
+        },
+        "model_replayed": true,
+        "passed": true,
+        "records": {
+          "nominal": {
+            "detail": null,
+            "id": "winner",
+            "metrics": {
+              "balance_mm": -2.2737367544323206e-13,
+              "max_daily_balance_mm": 1.7053025658242404e-13,
+              "test": {
+                "observations": 172,
+                "rmse_mm": 0.05732688423270048,
+                "volume_bias_mm": 3.0696967662389687
+              },
+              "trace": null,
+              "train": {
+                "observations": 687,
+                "rmse_mm": 0.24756027193078642,
+                "volume_bias_mm": 19.6311377531478
+              },
+              "validation": {
+                "observations": 172,
+                "rmse_mm": 0.30277234727278923,
+                "volume_bias_mm": 10.026784556951478
+              }
+            },
+            "score": 0.24756027193078642,
+            "status": "complete",
+            "steps": 1460
+          }
+        },
+        "scope": "Synthetic HBV catchment only. Train selects parameters; validation selects an arm; test is a final descriptive check, never a search signal.",
+        "score_replayed": true,
+        "search": {
+          "budget": 400,
+          "evaluations": 400,
+          "evaluator": "hydro-craft",
+          "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+          "optimizer": "cmaes",
+          "parameters": [
+            263.0055338433503,
+            2.5233420589866187,
+            0.7951661948264621,
+            0.2896840468541008,
+            0.039472540701132236,
+            2.5357667334417577,
+            3.525480196713928
+          ],
+          "schema": "domain-evaluator.search/0.1",
+          "score": 0.24756027193078642,
+          "seed": 2,
+          "status": "complete",
+          "statuses": {
+            "complete": 400
+          },
+          "steps": 584000,
+          "termination": "evaluation_budget"
+        }
+      },
+      "id": "cmaes-2",
+      "passed": true
+    },
+    {
+      "best": {
+        "budget": 400,
+        "evaluations": 400,
+        "evaluator": "hydro-craft",
+        "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+        "optimizer": "de",
+        "parameters": [
+          245.72486773273368,
+          3.0270775078391563,
+          0.8022999414816968,
+          0.26735227492069447,
+          0.033871377949328686,
+          2.6522729199837696,
+          3.5019037700476288
+        ],
+        "schema": "domain-evaluator.search/0.1",
+        "score": 0.20488335750081313,
+        "seed": 1,
+        "status": "complete",
+        "statuses": {
+          "complete": 379,
+          "invalid": 21
+        },
+        "steps": 553340,
+        "termination": "evaluation_budget"
+      },
+      "checks": {
+        "cli_status": {
+          "nominal": {
+            "all_complete": true,
+            "cli_exit": 0,
+            "records": 1,
+            "stderr": ""
+          }
+        },
+        "metrics": {
+          "test_rmse_mm": 0.05566038498357505,
+          "train_rmse_mm": 0.20488335750081313,
+          "validation_rmse_mm": 0.24817688500574192
+        },
+        "model_hashes": {
+          "nominal": {
+            "cli": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+            "expected": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197"
+          }
+        },
+        "model_replayed": true,
+        "passed": true,
+        "records": {
+          "nominal": {
+            "detail": null,
+            "id": "winner",
+            "metrics": {
+              "balance_mm": 1.5631940186722204e-13,
+              "max_daily_balance_mm": 2.2737367544323206e-13,
+              "test": {
+                "observations": 172,
+                "rmse_mm": 0.05566038498357505,
+                "volume_bias_mm": -4.991691031460769
+              },
+              "trace": null,
+              "train": {
+                "observations": 687,
+                "rmse_mm": 0.20488335750081313,
+                "volume_bias_mm": -3.4258807430786353
+              },
+              "validation": {
+                "observations": 172,
+                "rmse_mm": 0.24817688500574192,
+                "volume_bias_mm": 4.861712842711947
+              }
+            },
+            "score": 0.20488335750081313,
+            "status": "complete",
+            "steps": 1460
+          }
+        },
+        "scope": "Synthetic HBV catchment only. Train selects parameters; validation selects an arm; test is a final descriptive check, never a search signal.",
+        "score_replayed": true,
+        "search": {
+          "budget": 400,
+          "evaluations": 400,
+          "evaluator": "hydro-craft",
+          "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+          "optimizer": "de",
+          "parameters": [
+            245.72486773273368,
+            3.0270775078391563,
+            0.8022999414816968,
+            0.26735227492069447,
+            0.033871377949328686,
+            2.6522729199837696,
+            3.5019037700476288
+          ],
+          "schema": "domain-evaluator.search/0.1",
+          "score": 0.20488335750081313,
+          "seed": 1,
+          "status": "complete",
+          "statuses": {
+            "complete": 379,
+            "invalid": 21
+          },
+          "steps": 553340,
+          "termination": "evaluation_budget"
+        }
+      },
+      "id": "de-1",
+      "passed": true
+    },
+    {
+      "best": {
+        "budget": 400,
+        "evaluations": 400,
+        "evaluator": "hydro-craft",
+        "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+        "optimizer": "de",
+        "parameters": [
+          329.54843831296745,
+          4.59369868082513,
+          0.906224591729232,
+          0.2625873299463655,
+          0.027691399313648626,
+          2.476590874475387,
+          3.5002846455108507
+        ],
+        "schema": "domain-evaluator.search/0.1",
+        "score": 0.2066926234990256,
+        "seed": 2,
+        "status": "complete",
+        "statuses": {
+          "complete": 366,
+          "invalid": 34
+        },
+        "steps": 534360,
+        "termination": "evaluation_budget"
+      },
+      "checks": {
+        "cli_status": {
+          "nominal": {
+            "all_complete": true,
+            "cli_exit": 0,
+            "records": 1,
+            "stderr": ""
+          }
+        },
+        "metrics": {
+          "test_rmse_mm": 0.07767643814396932,
+          "train_rmse_mm": 0.2066926234990256,
+          "validation_rmse_mm": 0.2571657824518385
+        },
+        "model_hashes": {
+          "nominal": {
+            "cli": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+            "expected": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197"
+          }
+        },
+        "model_replayed": true,
+        "passed": true,
+        "records": {
+          "nominal": {
+            "detail": null,
+            "id": "winner",
+            "metrics": {
+              "balance_mm": 1.4210854715202004e-12,
+              "max_daily_balance_mm": 2.2737367544323206e-13,
+              "test": {
+                "observations": 172,
+                "rmse_mm": 0.07767643814396932,
+                "volume_bias_mm": -4.030496774659789
+              },
+              "trace": null,
+              "train": {
+                "observations": 687,
+                "rmse_mm": 0.2066926234990256,
+                "volume_bias_mm": -3.6250727128055114
+              },
+              "validation": {
+                "observations": 172,
+                "rmse_mm": 0.2571657824518385,
+                "volume_bias_mm": 1.018991031717
+              }
+            },
+            "score": 0.2066926234990256,
+            "status": "complete",
+            "steps": 1460
+          }
+        },
+        "scope": "Synthetic HBV catchment only. Train selects parameters; validation selects an arm; test is a final descriptive check, never a search signal.",
+        "score_replayed": true,
+        "search": {
+          "budget": 400,
+          "evaluations": 400,
+          "evaluator": "hydro-craft",
+          "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+          "optimizer": "de",
+          "parameters": [
+            329.54843831296745,
+            4.59369868082513,
+            0.906224591729232,
+            0.2625873299463655,
+            0.027691399313648626,
+            2.476590874475387,
+            3.5002846455108507
+          ],
+          "schema": "domain-evaluator.search/0.1",
+          "score": 0.2066926234990256,
+          "seed": 2,
+          "status": "complete",
+          "statuses": {
+            "complete": 366,
+            "invalid": 34
+          },
+          "steps": 534360,
+          "termination": "evaluation_budget"
+        }
+      },
+      "id": "de-2",
+      "passed": true
+    }
+  ],
+  "seconds": 2.4384020989999726
+}

@@ -1,0 +1,26 @@
+{
+  "budget": 400,
+  "evaluations": 400,
+  "evaluator": "hydro-craft",
+  "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+  "optimizer": "de",
+  "parameters": [
+    245.72486773273368,
+    3.0270775078391563,
+    0.8022999414816968,
+    0.26735227492069447,
+    0.033871377949328686,
+    2.6522729199837696,
+    3.5019037700476288
+  ],
+  "schema": "domain-evaluator.search/0.1",
+  "score": 0.20488335750081313,
+  "seed": 1,
+  "status": "complete",
+  "statuses": {
+    "complete": 379,
+    "invalid": 21
+  },
+  "steps": 553340,
+  "termination": "evaluation_budget"
+}
