@@ -165,8 +165,18 @@ python optimization-jobs/tutorials/domain-evaluators/compare.py \
 
 All summary fields except elapsed seconds must match exactly; histories also
 match in the worker-count regression. Both random streams of CMA-ES are seeded.
-There is no asynchronous optimizer scheduling. This is a fixed-environment
-reproducibility result, not a bitwise portability promise across platforms.
+There is no asynchronous optimizer scheduling.
+
+The same seed can still give another result on another machine. fcmaes CMA-ES
+calls BLAS, and OpenBLAS selects its kernels by CPU model; a difference in the
+last digit of one matrix product changes the rest of a search. The job
+environment therefore sets `OPENBLAS_CORETYPE=Nehalem`, a kernel that every
+x86-64 CPU supported by numpy can run, and `identity.json` records the kernels
+that were loaded. The thermo adapter avoids numpy's vector power for the same
+reason. With this, the recorded smoke summaries are reproduced exactly on
+different x86-64 CPUs under the pinned requirements; continuous integration
+compares them. Another Python package set, C library or architecture can
+still change the last digits, so a mismatch names the fields that differ.
 
 ## 5. A campaign
 

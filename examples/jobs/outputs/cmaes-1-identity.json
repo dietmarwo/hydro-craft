@@ -1,5 +1,11 @@
 {
   "adapter_sha256": "42a86af2c2b0d1c0ca14dbcc5cb0d267e533e82bfbb546f0dbcbeca00b116f13",
+  "blas": {
+    "loaded_kernels": [
+      "Nehalem"
+    ],
+    "requested_kernel": "Nehalem"
+  },
   "case_sha256": "a91278cffb60f09efd6fba0eaa3fc3b33a7d69b4a704bb5f2e49f0b087e6642b",
   "distribution": "hydro-craft",
   "evaluation_budget": 400,
@@ -19,10 +25,10 @@
     "numpy": "2.5.4",
     "scipy": "1.17.0"
   },
-  "python": "3.12.14",
+  "python": "3.12.3",
   "scope": "Wheel bytes verified against SHA256SUMS; installed package files verified against wheel. Host libraries are not snapshotted.",
   "seed": 1,
-  "support_sha256": "076cfd307673def8cc92b1bfc1829d6ad7027ffbcd356ca655552c5007ee2f1b",
+  "support_sha256": "083c75cf9b69e95b83cc443303e86cdc2566b06c040a16bd14ec3a4a619c90c8",
   "version": "0.3.0",
   "wheel": "hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl",
   "wheel_sha256": "e4f132c365f1e06d002584b9cf19f89c867ead707deb8ef3a4aa0dbb65f7927b",
