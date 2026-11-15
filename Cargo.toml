@@ -9,7 +9,7 @@ repository = "https://github.com/dietmarwo/hydro-craft"
 keywords = ["hydrology", "hbv", "rainfall-runoff", "reservoir", "simulation"]
 categories = ["science::geo", "simulation"]
 # Release artifacts and patch series ship in the ZIP, not in the crate or sdist.
-exclude = ["/packages/", "/patches/", "/dist/", "/SHA256SUMS", "/docs/images/"]
+exclude = ["/packages/", "/patches/", "/dist/", "/SHA256SUMS", "/docs/images/", "/examples/jobs/"]
 
 [lib]
 crate-type = ["rlib", "cdylib"]
