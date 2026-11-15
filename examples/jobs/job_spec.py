@@ -16,6 +16,7 @@ def main():
     p.add_argument("--optimizer", choices=["cmaes", "de"], default="cmaes")
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--request-key", default="hydro-example")
+    p.add_argument("--binary", type=Path, help="CLI executable; default hydro-craft/target/release/hydro-craft")
     args = p.parse_args()
     if args.evals < 1 or args.seed < 0 or not 1 <= args.workers <= 8:
         raise ValueError("positive evals, nonnegative seed and 1..8 workers required")
@@ -25,7 +26,7 @@ def main():
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
     folder = args.output.resolve()
-    driver.stage(args.sources.resolve(), "hydro-craft", folder)
+    driver.stage(args.sources.resolve(), "hydro-craft", folder, args.binary)
     if args.kind == "evaluation":
         job = driver.command_spec(folder, ["wrap_cli.py"], {"result": "result.json", "status": "status.json"}, args.workers)
     else:

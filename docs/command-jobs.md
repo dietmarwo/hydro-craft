@@ -55,6 +55,8 @@ source build as described in the [user manual](user-manual.md), followed by a
 new descriptor wheel path/hash and fresh numerical baseline. The examples
 reserve `cpu_slots` equal to native `workers`; the optimizer itself is serial.
 Check `node doctor` before requesting more slots than the host provides.
+The scripts expect each CLI in its repository's `target/release`; pass
+`--binary` for a build in another target directory.
 
 ## 2. One evaluation as a job
 
@@ -107,9 +109,12 @@ done
 `optimize.py --seed S --evals E` runs fcmaes CMA-ES or DE ask/tell. Each
 population is one `Prepared.score_matrix` call. The score is training RMSE;
 validation and test observations never enter the optimizer's objective.
-The saved [case](../examples/jobs/case.json) is generated from the repository's
-[synthetic example](../examples/python/synthetic.py), with noisy observations,
-fixed folds, and an `lp` search bound extending to 1.2. Invalid rows receive
+The model in the saved [case](../examples/jobs/case.json) is the output of
+`observe(catchment(forcing()))` with the default arguments of the repository's
+[synthetic example](../examples/python/synthetic.py): four years of seeded
+forcing, noisy observations with gaps, and fixed folds. The shared test suite
+regenerates it and compares. The search box is the example's `BOUNDS`, with
+the `lp` bound extended to 1.2 so that invalid rows occur. Invalid rows receive
 `1000 * (1 + distance outside the model limits)`; they cannot become the best
 complete candidate. History keeps every status, step count and penalized score.
 
@@ -179,8 +184,10 @@ python experiment-craft/examples/campaigns/domain-evaluators/run.py --sources . 
 The generator expands seeds × optimizers into explicit named arms. This is
 intentional: experiment-craft cannot bind an output from a multi-variant matrix.
 The check step has `needs` for every arm and binds their sealed `best` outputs.
-It replays each point through the staged CLI as a full record, checks the model
-hash and score, and tabulates train, validation and test RMSE in `checks.json`.
+It replays each point through the staged CLI as a full record and checks three
+things: the winner names this case's model hash, the CLI reports that same
+hash for the model it evaluated, and the CLI score equals the search score.
+It tabulates train, validation and test RMSE in `checks.json`.
 A second observation of the completed campaign must submit no new native jobs.
 To select using validation rather than training, inspect the numeric file:
 

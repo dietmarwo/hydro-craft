@@ -10,7 +10,7 @@ from wrap_cli import evaluate
 
 
 def check(best, case, binary, folder):
-    report = dict(passed=False, search=best, records={}, metrics={})
+    report = dict(passed=False, search=best, records={}, metrics={}, model_hashes={})
     if best.get("status") != "complete":
         report["error"] = "search has no complete candidate"
         return report
@@ -30,13 +30,18 @@ def check(best, case, binary, folder):
         write(folder / (name + "-replay.json"), data)
         report["records"][name] = data["records"][0]
         report.setdefault("cli_status", {})[name] = status
+        # The CLI hashes the model bytes it evaluated; they must be this model.
+        report["model_hashes"][name] = dict(
+            expected=hashlib.sha256(canonical(model).encode()).hexdigest(), cli=data.get("model_sha256"))
     nominal = report["records"]["nominal"]
     # CLI and wheel evaluate the same model; accommodate only roundoff in replay.
     matched = nominal["status"] == "complete" and math.isclose(
         nominal["score"], best["score"], rel_tol=1e-12, abs_tol=1e-12)
     all_complete = all(r["status"] == "complete" for r in report["records"].values())
-    report["passed"] = matched and all_complete
+    same_models = all(h["cli"] == h["expected"] for h in report["model_hashes"].values())
+    report["passed"] = matched and all_complete and same_models
     report["score_replayed"] = matched
+    report["model_replayed"] = same_models
     if nominal["status"] == "complete":
         report["metrics"] = adapter.report(report["records"])
     report["scope"] = case["scope"]
