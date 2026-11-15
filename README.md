@@ -79,3 +79,5 @@ objective, and `validation/optimize_performance.py` times it in full,
 `--scores` and `--matrix` modes. The native sweep needs only the Rust
 crate. See `evidence/` for actual runs and `patches/` for the patch
 series of each release (`patches/0.2.0/`, `patches/0.3.0/`).
+
+See the [executed command-job tutorial](docs/command-jobs.md) for hashed evaluations, optimization and campaigns.

@@ -1,0 +1,30 @@
+{
+  "adapter_sha256": "42a86af2c2b0d1c0ca14dbcc5cb0d267e533e82bfbb546f0dbcbeca00b116f13",
+  "case_sha256": "a91278cffb60f09efd6fba0eaa3fc3b33a7d69b4a704bb5f2e49f0b087e6642b",
+  "distribution": "hydro-craft",
+  "evaluation_budget": 400,
+  "evaluator_max_steps": 1460,
+  "model_sha256": "21e010b22d70e15682400b04cd6b836e53e268d78024251abc80a08e1d0bd197",
+  "module": "hydro_craft",
+  "optimizer": "de",
+  "optimizer_parallelism": "serial ask/tell; native score_matrix population parallelism only",
+  "package_files": {
+    "__init__.py": "3fbf0766588cb6ed7d3956da61a69459c6d67cb3a2319b299c99726df50bafd8",
+    "_native.abi3.so": "cdaafc08b607b1d787e56ad491b6202318cae6fe9c51fe85dcf3bede57beef0d",
+    "campaign.py": "0a1c31d7d1089077b6acc2377b2218f20ea7eaef240ca463611dca35f9b77f92",
+    "example.json": "ab1aad71b337cfd42e687b41058a4242fc1ba16564fe8e2ea9d595281ea61824"
+  },
+  "packages": {
+    "fcmaes": "2.1.0",
+    "numpy": "2.5.4",
+    "scipy": "1.17.0"
+  },
+  "python": "3.12.14",
+  "scope": "Wheel bytes verified against SHA256SUMS; installed package files verified against wheel. Host libraries are not snapshotted.",
+  "seed": 1,
+  "support_sha256": "076cfd307673def8cc92b1bfc1829d6ad7027ffbcd356ca655552c5007ee2f1b",
+  "version": "0.3.0",
+  "wheel": "hydro_craft-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+  "wheel_sha256": "e4f132c365f1e06d002584b9cf19f89c867ead707deb8ef3a4aa0dbb65f7927b",
+  "workers": 1
+}
